@@ -39,9 +39,11 @@ function fallback() {
     img.loading = 'lazy';
     strip.appendChild(img);
   }
-  document.body.appendChild(strip);
+  $('.hero').appendChild(strip);
   $('.brand-word').style.visibility = 'visible';
-  gsap.set(['.brand-dot', '.crumbs > *', '.mode > *', '.sound'], { opacity: 1 });
+  gsap.set(['.brand-dot', '.sound'], { opacity: 1 });
+  document.documentElement.classList.remove('is-locked');
+  $$('.reveal').forEach((el) => el.classList.add('is-in'));
 }
 
 /* ------------------------------------------------------------------ */
@@ -69,7 +71,7 @@ const bg = { tex: null };
 const view = { w: 1, h: 1, dpr: 1 };
 const panel = { t: 0, r: 0, b: 0, l: 0 };
 const frame = { x: 0, y: 0, w: 1, h: 1 };
-const fx = { reveal: 0, inset: 0, zoom: 1.06 };
+const fx = { reveal: 0, inset: 0, zoom: 1.06, shift: 0 };
 
 /* ---------- background: hills photo + drifting petals (pixel space) ---------- */
 
@@ -84,6 +86,7 @@ const bgMat = new THREE.ShaderMaterial({
     uFocus: { value: new THREE.Vector2(BG_FOCUS.x, BG_FOCUS.y) },
     uReveal: { value: 0 },
     uZoom: { value: 1.06 },
+    uShift: { value: 0 },
     uPaper: { value: new THREE.Vector3(0.973, 0.973, 0.965) },
     uView: { value: new THREE.Vector2(1, 1) },
     uFrame: { value: new THREE.Vector4(0, 0, 1, 1) },
@@ -99,6 +102,7 @@ const bgMat = new THREE.ShaderMaterial({
     uniform vec2 uFocus;
     uniform float uReveal;
     uniform float uZoom;
+    uniform float uShift; // in screen heights: the photo slides down so open sky fills the view
     uniform vec3 uPaper;
     uniform vec2 uView;
     uniform vec4 uFrame; // x, y (from bottom), w, h in css px
@@ -110,9 +114,16 @@ const bgMat = new THREE.ShaderMaterial({
       disp.y = disp.x / uImgAspect;
       vec2 off = (uFrame.zw - disp) * vec2(uPos.x, 1.0 - uPos.y);
       vec2 uv = (p - off) / disp;
+      uv.y += uShift * uFrame.w / disp.y;
       uv = (uv - uFocus) / uZoom + uFocus;
       // negative lod bias keeps the grass crisp when the photo is drawn smaller than its pixels
       vec3 bgCol = texture2D(uBg, vec2(uv.x, 1.0 - uv.y), -0.5).rgb;
+      // above the photo's top edge the sky carries on, softly blurred and a touch deeper
+      if (uv.y > 0.97) {
+        vec3 top = texture2D(uBg, vec2(uv.x, 0.006), 5.0).rgb;
+        vec3 upper = mix(top, top * vec3(0.8, 0.88, 0.96), smoothstep(1.0, 1.8, uv.y));
+        bgCol = mix(bgCol, upper, smoothstep(0.975, 1.0, uv.y));
+      }
       // soft bloom outward from the middle of the scene
       float d = length(vUv - vec2(0.5, 0.42));
       float e = uReveal * 1.45;
@@ -181,10 +192,14 @@ const CARD_ASPECT = 16 / 9;
 const cardVertex = /* glsl */`
   uniform float uHover;
   uniform float uLift;
+  uniform float uBend;   // 1 = curved to sit on the ring, 0 = flat
+  uniform float uBendR;
   varying vec2 vUv;
   void main() {
     vUv = uv;
     vec3 p = position;
+    float a = p.x / uBendR;
+    p = mix(p, vec3(uBendR * sin(a), p.y, uBendR * (1.0 - cos(a))), uBend);
     p.z += uHover * uLift;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
   }
@@ -232,6 +247,8 @@ function makeCardMaterial(size) {
       uOpacity: { value: 1 },
       uHover: { value: 0 },
       uLift: { value: size.x * 0.08 },
+      uBend: { value: 0 },
+      uBendR: { value: 10 },
     },
     vertexShader: cardVertex,
     fragmentShader: cardFragment,
@@ -252,19 +269,6 @@ RING.w = RING.h / CARD_ASPECT;
 const ringGroup = new THREE.Group();
 const ringState = { t: 0, spin: 0, speed: 0, user: 0, build: 0 };
 
-function bentPlane(w, h, R) {
-  const g = new THREE.PlaneGeometry(w, h, 24, 1);
-  const pos = g.attributes.position;
-  for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i);
-    const a = x / R;
-    pos.setXYZ(i, R * Math.sin(a), pos.getY(i), R * (1 - Math.cos(a)));
-  }
-  g.computeBoundingSphere();
-  g.computeBoundingBox();
-  return g;
-}
-
 const arcCards = [];
 const ringCards = [];
 {
@@ -284,12 +288,14 @@ const ringCards = [];
   scene.add(arcGroup);
 }
 {
-  const geo = bentPlane(RING.w, RING.h, RING.R);
+  const geo = new THREE.PlaneGeometry(RING.w, RING.h, 24, 1);
   const size = new THREE.Vector2(RING.w, RING.h);
   const step = TAU / RING.N;
   for (let i = 0; i < RING.N; i++) {
     const mat = makeCardMaterial(size);
     mat.uniforms.uOpacity.value = 0;
+    mat.uniforms.uBend.value = 1;
+    mat.uniforms.uBendR.value = RING.R;
     const mesh = new THREE.Mesh(geo, mat);
     mesh.visible = false;
     // build starts at the front-right and runs right -> back -> left -> front
@@ -478,8 +484,12 @@ function measure() {
   view.h = Math.max(1, canvas.clientHeight);
   // phones get their full pixel density so the photos stay sharp; big screens cap at 2x
   view.dpr = Math.min(window.devicePixelRatio || 1, view.w * view.h < 600000 ? 3 : 2);
-  renderer.setPixelRatio(view.dpr);
-  renderer.setSize(view.w, view.h, false);
+  // resizing the drawing buffer clears it, so only do it when the size really changed
+  const size = renderer.getSize(new THREE.Vector2());
+  if (renderer.getPixelRatio() !== view.dpr || size.x !== view.w || size.y !== view.h) {
+    renderer.setPixelRatio(view.dpr);
+    renderer.setSize(view.w, view.h, false);
+  }
 
   // the scene stays full-bleed; once framed, it is composed in the space below the nav
   panel.l = panel.r = panel.b = 0;
@@ -491,6 +501,7 @@ function measure() {
   layout.arcTo = arcFinalPose(fa);
   layout.ringFrom = ringLoaderPose(fa0);
   layout.ringTo = ringFinalPose(fa);
+  measureStrip();
 
   bgCam.right = view.w;
   bgCam.top = view.h;
@@ -502,6 +513,7 @@ function measure() {
 function resize() {
   measure();
   applyInset();
+  measureScroll();
 }
 
 function applyInset() {
@@ -561,6 +573,130 @@ function updateArc(dt) {
   }
 }
 
+/* ---------- scroll: hero -> about -> footer ---------- */
+
+// a: hero -> about, the ring unrolls into a reel that travels with the page
+// f: about -> footer, the reel rolls back up into a ring above the footer
+const scroll = { y: 0, raw: 0, vh: 1, footTop: 1, a: 0, f: 0, dim: 0, offset: 0 };
+const strip = { vertical: true, h: 3.3, w: 1.9, pitch: 3.85, L: 77, xc: 3, yc: 0, perVh: 5.5 };
+const nav = $('.nav');
+const textBlocks = $$('.about .block-in, .site-foot .foot-in');
+
+function measureScroll() {
+  scroll.vh = window.innerHeight;
+  const foot = $('.site-foot');
+  scroll.footTop = foot ? foot.offsetTop : document.documentElement.scrollHeight;
+}
+
+// the reel is a column beside the copy on wide screens, a band across tall ones
+function measureStrip() {
+  const fa = (view.w - panel.l - panel.r) / Math.max(1, view.h - panel.t - panel.b);
+  strip.vertical = fa >= 1;
+  if (strip.vertical) {
+    strip.h = 3.6;
+    strip.w = strip.h / CARD_ASPECT;
+    strip.pitch = strip.h + 0.5;
+    strip.xc = Math.min(5 * fa * 0.5, 5 * fa - strip.w * 0.9);
+    strip.yc = 0;
+    strip.perVh = 10 * 0.55; // a little slower than the page
+  } else {
+    strip.h = 2.7;
+    strip.w = strip.h / CARD_ASPECT;
+    strip.pitch = strip.w + 0.32;
+    strip.xc = 0;
+    strip.yc = -2.0;
+    strip.perVh = 5 * fa * 1.4;
+  }
+  strip.L = RING.N * strip.pitch;
+}
+
+// how much of the reel's band the copy covers right now (0..1)
+function textOverlap() {
+  const u = frame.h / 10; // px per world unit on the reel's plane
+  const cx = frame.x + frame.w / 2, cy = frame.y + frame.h / 2;
+  let x0 = 0, x1 = view.w, y0 = frame.y, y1 = frame.y + frame.h;
+  if (strip.vertical) {
+    x0 = cx + (strip.xc - strip.w * 0.8) * u;
+    x1 = cx + (strip.xc + strip.w * 0.8) * u;
+  } else {
+    y0 = cy - (strip.yc + strip.h * 0.5) * u;
+    y1 = cy - (strip.yc - strip.h * 0.5) * u;
+  }
+  let cover = 0;
+  for (const el of textBlocks) {
+    const r = el.getBoundingClientRect();
+    if (r.right < x0 || r.left > x1) continue;
+    const iy = Math.min(y1, r.bottom) - Math.max(y0, r.top);
+    if (iy > 0) cover = Math.max(cover, iy / (y1 - y0));
+  }
+  return clamp(cover * 2.5, 0, 1);
+}
+
+function updateScroll(dt) {
+  const raw = live ? window.scrollY : 0;
+  // the nav steps aside while reading down the page and returns on the way back up
+  const dy = raw - scroll.raw;
+  let away = nav.classList.contains('is-away');
+  if (raw > scroll.vh * 0.5 && dy > 3) away = true;
+  else if (dy < -3 || raw < scroll.vh * 0.5) away = false;
+  if (away !== nav.classList.contains('is-away')) nav.classList.toggle('is-away', away);
+  scroll.raw = raw;
+
+  scroll.y += (raw - scroll.y) * (1 - Math.exp(-dt * 8));
+  if (Math.abs(raw - scroll.y) < 0.05) scroll.y = raw;
+  const { y, vh } = scroll;
+  const footStart = scroll.footTop - vh; // the footer's top edge reaches the bottom of the screen
+  scroll.a = smoothstep(y, vh * 0.02, vh * 0.9);
+  scroll.f = smoothstep(y, footStart + vh * 0.05, footStart + vh * 0.9);
+  // the reel only travels while every card is in it, so no card wraps around mid-flight
+  scroll.offset = (clamp(y, vh * 0.9, Math.max(vh * 0.9, footStart + vh * 0.05)) - vh * 0.9) / vh * strip.perVh;
+  // the hills sink as the page rises, leaving open sky behind the copy
+  fx.shift = lerp(0.55 * (1 - Math.pow(1 - scroll.a, 3)), 0.62, easeInOut2(scroll.f));
+  const cover = scroll.a * (1 - scroll.f) > 0.01 ? textOverlap() : 0;
+  scroll.dim += (cover - scroll.dim) * (1 - Math.exp(-dt * 6));
+}
+
+const p1 = new THREE.Vector3();
+const p2 = new THREE.Vector3();
+const p3 = new THREE.Vector3();
+const q1 = new THREE.Quaternion();
+const q2 = new THREE.Quaternion();
+const q3 = new THREE.Quaternion();
+const qy = new THREE.Quaternion();
+const eul = new THREE.Euler();
+const AXIS_X = new THREE.Vector3(1, 0, 0);
+const AXIS_Y = new THREE.Vector3(0, 1, 0);
+const REEL_CAM = new THREE.Vector3(0, 0, CAM_DIST);
+const reelLook = new THREE.Vector3();
+
+// a card's place in the reel; returns its scale
+function stripPose(c, pos, quat) {
+  const L = strip.L;
+  const u = (((c.order * strip.pitch + scroll.offset) % L) + L) % L - L / 2;
+  const drift = Math.sin(clock * 0.6 + c.order * 1.7) * 0.06; // never quite still
+  if (strip.vertical) {
+    pos.set(strip.xc + 0.45 * Math.sin(u * 0.24 + 0.8) + drift, u, -0.045 * u * u - scroll.dim * 1.5);
+    eul.set(-Math.atan(0.09 * u), -0.12 * Math.cos(u * 0.24 + 0.8), 0.05 * Math.sin(u * 0.3));
+  } else {
+    const x = -u;
+    pos.set(x, strip.yc + 0.18 * Math.sin(x * 0.55) + drift, -0.07 * x * x - scroll.dim * 1.5);
+    eul.set(0, Math.atan(0.14 * x), -0.03 * x);
+  }
+  quat.setFromEuler(eul);
+  return strip.h / RING.h;
+}
+
+// a card's place in the smaller, tilted ring above the footer; returns its scale
+function footPose(ph, pos, quat) {
+  const fa = frame.w / frame.h;
+  const R = Math.min(5 * fa * (strip.vertical ? 0.6 : 0.74), 4.3);
+  const tilt = 0.36;
+  pos.set(R * Math.sin(ph), 0, -R * Math.cos(ph)).applyAxisAngle(AXIS_X, tilt);
+  pos.y += strip.vertical ? 1.5 : 1.7;
+  quat.setFromAxisAngle(AXIS_X, tilt).multiply(qy.setFromAxisAngle(AXIS_Y, -ph));
+  return R / RING.R;
+}
+
 function updateRing(dt) {
   const tt = ringState.t;
   const a = layout.ringFrom, b = layout.ringTo;
@@ -577,27 +713,57 @@ function updateRing(dt) {
   lookTarget.x += pointer.sx * 0.9 * live;
   lookTarget.y += pointer.sy * 0.5 * live;
 
-  camera.fov = lerp(a.fov, b.fov, tf);
-  camera.position.copy(vA);
+  // scrolling pulls the camera back out of the ring to where it watches the reel
+  const ca = easeInOut2(clamp((scroll.a - 0.06) / 0.8, 0, 1));
+  reelLook.set(pointer.sx * 0.35, -pointer.sy * 0.25, 0);
+  camera.position.copy(vA).lerp(REEL_CAM, ca);
+  lookTarget.lerp(reelLook, ca);
+  camera.fov = lerp(lerp(a.fov, b.fov, tf), CAM_FOV, ca);
   camera.up.set(0, 1, 0);
   camera.lookAt(lookTarget);
-  camera.rotateZ(lerp(a.roll, b.roll, tf));
+  camera.rotateZ(lerp(a.roll, b.roll, tf) * (1 - ca));
 
   ringState.spin += (ringState.speed + ringState.user) * dt;
   ringState.user *= Math.exp(-dt * 2.2);
-  ringGroup.rotation.y = ringState.spin;
 
   const R = RING.R;
+  const sa = scroll.a, sf = scroll.f;
   for (const c of ringCards) {
     const p = c.p;
     c.mesh.visible = p > 0.001;
     if (!c.mesh.visible) continue;
-    c.mesh.position.set(R * Math.sin(c.phi), 0, -R * Math.cos(c.phi));
-    // hinge open from the previous card
-    c.mesh.rotation.set(0, -c.phi - (1 - p) * 1.7, 0);
-    const s = 0.72 + 0.28 * p;
-    c.mesh.scale.set(s, s, s);
-    c.mat.uniforms.uOpacity.value = clamp(p * 1.6, 0, 1);
+    // its place on the hero ring; the build hinges each card open from the previous one
+    const ph = c.phi - ringState.spin;
+    p1.set(R * Math.sin(ph), 0, -R * Math.cos(ph));
+    q1.setFromEuler(eul.set(0, -ph - (1 - p) * 1.7, 0));
+    let s = 0.72 + 0.28 * p;
+    let bend = 1;
+    let opacity = clamp(p * 1.6, 0, 1);
+    // cards behind the camera leave the ring first so none sweeps through the lens;
+    // they return in reel order, one after another
+    const ai = easeInOut2(clamp((sa - 0.35 * (1 + Math.cos(ph)) * 0.5) / 0.65, 0, 1));
+    const fi = easeInOut2(clamp((sf - 0.3 * (c.order / RING.N)) / 0.7, 0, 1));
+    if (ai > 0 || fi > 0) {
+      const ss = stripPose(c, p2, q2);
+      p1.lerp(p2, ai);
+      q1.slerp(q2, ai);
+      s = lerp(s, ss, ai);
+      bend = 1 - ai;
+      if (fi > 0) {
+        const fs = footPose(ph, p3, q3);
+        p1.lerp(p3, fi);
+        q1.slerp(q3, fi);
+        s = lerp(s, fs, fi);
+        bend = lerp(bend, 1, fi);
+      }
+      // the reel fades back while copy passes over it
+      opacity *= 1 - 0.85 * scroll.dim * ai * (1 - fi);
+    }
+    c.mesh.position.copy(p1);
+    c.mesh.quaternion.copy(q1);
+    c.mesh.scale.setScalar(s);
+    c.mat.uniforms.uBend.value = bend;
+    c.mat.uniforms.uOpacity.value = opacity;
   }
 }
 
@@ -673,6 +839,8 @@ let drag = null;
 let paused = false;
 
 function pick(clientX, clientY) {
+  // reels faded back behind the copy can't be picked through it
+  if (scroll.dim * scroll.a * (1 - scroll.f) > 0.5) return null;
   if (clientX < frame.x || clientX > frame.x + frame.w || clientY < frame.y || clientY > frame.y + frame.h) return null;
   const rect = canvas.getBoundingClientRect();
   ndc.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
@@ -683,8 +851,8 @@ function pick(clientX, clientY) {
 
 function spinBy(pixels) {
   const k = pixels / Math.max(320, frame.w * 0.55);
-  if (phase.ring) ringState.spin -= k * 0.8;
-  else arcState.spin += k;
+  if (!phase.ring) arcState.spin += k;
+  else if (scroll.a < 0.98 || scroll.f > 0.02) ringState.spin -= k * 0.8; // the reel itself follows the scroll
 }
 
 canvas.addEventListener('pointermove', (e) => {
@@ -726,13 +894,11 @@ function endDrag(e) {
   if (phase.ring) ringState.user = -v * 0.8; else arcState.user = v;
 }
 canvas.addEventListener('pointerup', endDrag);
-canvas.addEventListener('pointercancel', endDrag);
-canvas.addEventListener('wheel', (e) => {
-  if (!live) return;
-  e.preventDefault();
-  const d = clamp(e.deltaY + e.deltaX, -120, 120) * 0.004;
-  if (phase.ring) ringState.user -= d * 0.8; else arcState.user += d;
-}, { passive: false });
+// the browser took the gesture over for scrolling: not a tap, not a throw
+canvas.addEventListener('pointercancel', () => {
+  drag = null;
+  document.body.classList.remove('is-dragging');
+});
 
 function updateHover(dt) {
   let target = null;
@@ -784,6 +950,7 @@ function openLightbox(i, viaKeyboard = false) {
   if (lb.open) return;
   lb.open = true;
   lb.returnFocus = document.activeElement;
+  document.documentElement.classList.add('is-locked');
   lb.el.hidden = false;
   lb.img.style.opacity = '0';
   gsap.to(lb.el, { opacity: 1, duration: 0.4, ease: 'power2.out', onComplete: () => { paused = true; } });
@@ -794,6 +961,7 @@ function closeLightbox() {
   if (!lb.open) return;
   lb.open = false;
   paused = false;
+  if (live) document.documentElement.classList.remove('is-locked');
   gsap.to(lb.el, {
     opacity: 0, duration: 0.35, ease: 'power2.inOut',
     onComplete: () => { lb.el.hidden = true; lb.img.removeAttribute('src'); },
@@ -834,13 +1002,25 @@ lb.el.addEventListener('pointerup', (e) => {
 
 /* ---------- small DOM bits ---------- */
 
-$$('.mode-btn').forEach((btn) => btn.addEventListener('click', () => {
-  $$('.mode-btn').forEach((b) => {
-    const on = b === btn;
-    b.classList.toggle('is-active', on);
-    b.setAttribute('aria-pressed', String(on));
-  });
-}));
+// back to the top: the brand in the nav and the button in the footer
+const toTop = (e) => {
+  e.preventDefault();
+  window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
+};
+$('.brand').addEventListener('click', toTop);
+$('.to-top').addEventListener('click', toTop);
+
+// copy rises in as it scrolls into view
+if ('IntersectionObserver' in window) {
+  const io = new IntersectionObserver((entries) => entries.forEach((e) => {
+    if (!e.isIntersecting) return;
+    e.target.classList.add('is-in');
+    io.unobserve(e.target);
+  }), { threshold: 0.2 });
+  $$('.reveal').forEach((el) => io.observe(el));
+} else {
+  $$('.reveal').forEach((el) => el.classList.add('is-in'));
+}
 
 /* ---------- music ---------- */
 
@@ -909,14 +1089,14 @@ function addReveal(tl, gate, first) {
   tl.set('.brand-word', { visibility: 'visible' }, gate + 1.45);
   tl.set('.loader-name', { visibility: 'hidden' }, gate + 1.45);
   tl.fromTo('.brand-dot', { opacity: 0, x: -6 }, { opacity: 1, x: 0, duration: 0.5, ...ir }, gate + 1.45);
-  tl.fromTo(['.crumbs > *', '.mode > *', '.sound'], { opacity: 0, y: 6 }, { opacity: 1, y: 0, duration: 0.6, stagger: 0.035, ...ir }, gate + 1.5);
+  tl.fromTo('.sound', { opacity: 0, y: 6 }, { opacity: 1, y: 0, duration: 0.6, stagger: 0.035, ...ir }, gate + 1.5);
 
   tl.to(fx, { inset: 1, duration: 0.8, ease: 'power3.inOut', onUpdate: applyInset }, gate + 1.1);
 }
 
 // the reverse: nav links out, name back out of the nav, backdrop back to paper
 function addRewind(tl, at) {
-  tl.to(['.crumbs > *', '.mode > *', '.sound', '.brand-dot'], { opacity: 0, duration: 0.3, ease: 'power1.in' }, at);
+  tl.to(['.sound', '.brand-dot'], { opacity: 0, duration: 0.3, ease: 'power1.in' }, at);
 
   tl.set('.loader-name', { visibility: 'visible' }, at + 0.3);
   tl.set('.brand-word', { visibility: 'hidden' }, at + 0.3);
@@ -979,6 +1159,8 @@ function goLive() {
   if (live) return;
   live = true;
   document.body.classList.add('is-live');
+  document.documentElement.classList.remove('is-locked');
+  measureScroll();
   preloadFullPhotos();
 }
 
@@ -1018,12 +1200,14 @@ function tick() {
 
   updateCounter(dt);
   updateHover(dt);
+  updateScroll(dt);
   if (phase.ring) updateRing(dt); else updateArc(dt);
   updateCamera();
   updatePetals(dt);
 
   bgMat.uniforms.uReveal.value = fx.reveal;
   bgMat.uniforms.uZoom.value = fx.zoom;
+  bgMat.uniforms.uShift.value = fx.shift;
   bgMat.uniforms.uView.value.set(view.w, view.h);
   bgMat.uniforms.uFrame.value.set(0, 0, view.w, view.h);
 
@@ -1038,6 +1222,8 @@ function tick() {
 /* ------------------------------------------------------------------ */
 
 async function boot() {
+  if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+  window.scrollTo(0, 0);
   resize();
   loadTextures();
 
@@ -1055,6 +1241,7 @@ async function boot() {
   intro.tl = tl;
   window.addEventListener('resize', resize);
   if (window.visualViewport) window.visualViewport.addEventListener('resize', resize);
+  if ('ResizeObserver' in window) new ResizeObserver(measureScroll).observe($('.page'));
 
   last = performance.now();
   gsap.ticker.add(tick);
