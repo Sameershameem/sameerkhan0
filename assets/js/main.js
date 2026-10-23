@@ -1,4 +1,5 @@
 import * as THREE from '../vendor/three.module.min.js';
+import { createMusic } from './music.js';
 
 const gsap = window.gsap;
 const $ = (s, el = document) => el.querySelector(s);
@@ -26,12 +27,6 @@ const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const intro = { tl: null, switchAt: Infinity };
 const phase = { ring: false };
 
-function formatStat(el, v) {
-  const dec = parseInt(el.dataset.dec || '0', 10);
-  const padTo = parseInt(el.dataset.pad || '0', 10);
-  return v.toFixed(dec).padStart(padTo, '0') + (el.dataset.suffix || '');
-}
-
 // No WebGL: show the photos as a simple scrolling strip instead of the 3D scene.
 function fallback() {
   document.body.classList.add('no-webgl');
@@ -46,10 +41,7 @@ function fallback() {
   }
   document.body.appendChild(strip);
   $('.brand-word').style.visibility = 'visible';
-  gsap.set(['.brand-dot', '.crumbs > *', '.mode > *', '.stat', '.u sup'], { opacity: 1 });
-  gsap.set('.line-in', { y: 0, yPercent: 0 });
-  gsap.set('.u', { '--draw': 1 });
-  $$('.stat-num').forEach((el) => { el.textContent = formatStat(el, parseFloat(el.dataset.to)); });
+  gsap.set(['.brand-dot', '.crumbs > *', '.mode > *', '.sound'], { opacity: 1 });
 }
 
 /* ------------------------------------------------------------------ */
@@ -220,9 +212,6 @@ const cardFragment = /* glsl */`
     vec3 ph = mix(vec3(0.80, 0.79, 0.76), vec3(0.88, 0.87, 0.84), vUv.y);
     vec3 col = mix(ph, tex, uLoaded);
     if (!gl_FrontFacing) col *= 0.8;
-    // faint glassy edge
-    float edge = 1.0 - smoothstep(0.0, uSize.x * 0.035, -d);
-    col += edge * 0.07;
     col = mix(col, col * 1.06 + 0.03, uHover);
     gl_FragColor = vec4(col, a * uOpacity);
   }
@@ -492,10 +481,9 @@ function measure() {
   renderer.setPixelRatio(view.dpr);
   renderer.setSize(view.w, view.h, false);
 
-  // the scene stays full-bleed; once framed, it is composed in the space between the glass bars
-  panel.l = panel.r = 0;
+  // the scene stays full-bleed; once framed, it is composed in the space below the nav
+  panel.l = panel.r = panel.b = 0;
   panel.t = $('.nav').offsetHeight;
-  panel.b = $('.foot').offsetHeight;
 
   const fa = (view.w - panel.l - panel.r) / Math.max(1, view.h - panel.t - panel.b);
   const fa0 = view.w / view.h;
@@ -854,13 +842,34 @@ $$('.mode-btn').forEach((btn) => btn.addEventListener('click', () => {
   });
 }));
 
-function countUp(el, duration) {
-  const o = { v: 0 };
-  return gsap.to(o, {
-    v: parseFloat(el.dataset.to), duration, ease: 'expo.out',
-    onUpdate: () => { el.textContent = formatStat(el, o.v); },
-  });
+/* ---------- music ---------- */
+
+// Browsers only allow sound after the visitor interacts, so the score starts on the first
+// click, tap or key press anywhere (unless they muted it on an earlier visit). The nav button toggles it.
+const music = createMusic();
+const soundBtn = $('.sound');
+const soundPref = {
+  get() { try { return localStorage.getItem('sam.sound'); } catch { return null; } },
+  set(v) { try { localStorage.setItem('sam.sound', v); } catch { /* private mode */ } },
+};
+function showSound() {
+  soundBtn.classList.toggle('is-on', music.on);
+  soundBtn.setAttribute('aria-pressed', String(music.on));
 }
+soundBtn.addEventListener('click', () => {
+  if (music.on) music.pause(); else music.play();
+  soundPref.set(music.on ? 'on' : 'off');
+  showSound();
+});
+function firstGesture(e) {
+  window.removeEventListener('pointerdown', firstGesture, true);
+  window.removeEventListener('keydown', firstGesture, true);
+  if (soundBtn.contains(e.target) || soundPref.get() === 'off') return;
+  music.play();
+  showSound();
+}
+window.addEventListener('pointerdown', firstGesture, true);
+window.addEventListener('keydown', firstGesture, true);
 
 /* ------------------------------------------------------------------ */
 /* Timeline                                                            */
@@ -885,7 +894,7 @@ function nameFlip() {
   };
 }
 
-// backdrop in, name into the nav, glass bars in, scene framed between them, copy in
+// backdrop in, name into the nav, nav links in, scene framed below the nav
 function addReveal(tl, gate, first) {
   const ir = first ? {} : { immediateRender: false };
   tl.to(fx, { reveal: 1, duration: 0.55, ease: 'power2.inOut' }, gate + 0.05);
@@ -897,29 +906,14 @@ function addReveal(tl, gate, first) {
   tl.set('.brand-word', { visibility: 'visible' }, gate + 1.45);
   tl.set('.loader-name', { visibility: 'hidden' }, gate + 1.45);
   tl.fromTo('.brand-dot', { opacity: 0, x: -6 }, { opacity: 1, x: 0, duration: 0.5, ...ir }, gate + 1.45);
-  tl.fromTo(['.crumbs > *', '.mode > *'], { opacity: 0, y: 6 }, { opacity: 1, y: 0, duration: 0.6, stagger: 0.035, ...ir }, gate + 1.5);
+  tl.fromTo(['.crumbs > *', '.mode > *', '.sound'], { opacity: 0, y: 6 }, { opacity: 1, y: 0, duration: 0.6, stagger: 0.035, ...ir }, gate + 1.5);
 
   tl.to(fx, { inset: 1, duration: 0.8, ease: 'power3.inOut', onUpdate: applyInset }, gate + 1.1);
-  // frosted glass bars slide in over the scene, a light sheen runs across them
-  tl.fromTo(['.nav .glass', '.foot .glass'], { opacity: 0 }, { opacity: 1, duration: 0.7, ease: 'power2.out', ...ir }, gate + 1.05);
-  tl.fromTo('.nav .glass', { yPercent: -100 }, { yPercent: 0, duration: 0.9, ease: 'expo.out', ...ir }, gate + 1.05);
-  tl.fromTo('.foot .glass', { yPercent: 100 }, { yPercent: 0, duration: 0.9, ease: 'expo.out', ...ir }, gate + 1.12);
-  tl.fromTo('.sheen', { xPercent: -120 }, { xPercent: 260, duration: 1.5, stagger: 0.14, ease: 'power2.inOut', ...ir }, gate + 1.4);
-
-  tl.fromTo('.line-in', { y: 0, yPercent: 115 }, { yPercent: 0, duration: 0.95, stagger: 0.12, ease: 'power3.out', ...ir }, gate + 1.35);
-  tl.to('.stat', { opacity: 1, duration: 0.6, stagger: 0.08, ease: 'power2.out' }, gate + 1.6);
-  $$('.stat-num').forEach((el, i) => tl.add(countUp(el, 1.9), gate + 1.6 + i * 0.08));
-  tl.to('.u', { '--draw': 1, duration: 0.9, stagger: 0.13, ease: 'power3.out' }, gate + 2.05);
-  tl.to('.u sup', { opacity: 1, duration: 0.5, stagger: 0.13, ease: 'power2.out' }, gate + 2.25);
 }
 
-// the reverse: copy out, name back out of the nav, glass bars away, backdrop back to paper
+// the reverse: nav links out, name back out of the nav, backdrop back to paper
 function addRewind(tl, at) {
-  tl.to('.u sup', { opacity: 0, duration: 0.25, ease: 'power1.in' }, at);
-  tl.to('.u', { '--draw': 0, duration: 0.4, ease: 'power2.in' }, at);
-  tl.to('.stat', { opacity: 0, duration: 0.35, ease: 'power1.in' }, at);
-  tl.to('.line-in', { yPercent: 115, duration: 0.55, stagger: 0.06, ease: 'power3.in' }, at + 0.05);
-  tl.to(['.crumbs > *', '.mode > *', '.brand-dot'], { opacity: 0, duration: 0.3, ease: 'power1.in' }, at);
+  tl.to(['.crumbs > *', '.mode > *', '.sound', '.brand-dot'], { opacity: 0, duration: 0.3, ease: 'power1.in' }, at);
 
   tl.set('.loader-name', { visibility: 'visible' }, at + 0.3);
   tl.set('.brand-word', { visibility: 'hidden' }, at + 0.3);
@@ -927,8 +921,6 @@ function addRewind(tl, at) {
   tl.to('.loader-dot', { opacity: 1, duration: 0.3, ease: 'power1.out' }, at + 1.0);
 
   tl.to(fx, { inset: 0, duration: 0.8, ease: 'power3.inOut', onUpdate: applyInset }, at + 0.2);
-  tl.to('.nav .glass', { yPercent: -100, opacity: 0, duration: 0.6, ease: 'power3.in' }, at + 0.15);
-  tl.to('.foot .glass', { yPercent: 100, opacity: 0, duration: 0.6, ease: 'power3.in' }, at + 0.2);
   tl.to(fx, { reveal: 0, duration: 0.7, ease: 'power2.inOut' }, at + 0.3);
   tl.to(fx, { zoom: 1.06, duration: 0.7, ease: 'power2.inOut' }, at + 0.3);
 }
@@ -997,10 +989,7 @@ function seekIntro(tl, t) {
   // callbacks are suppressed while seeking, so settle the counters by hand
   counter.cols.forEach((c) => { c.pos = -1; });
   updateCounter(10);
-  if (t >= tl.duration() - 0.5) {
-    $$('.stat-num').forEach((el) => { el.textContent = formatStat(el, parseFloat(el.dataset.to)); });
-    goLive();
-  }
+  if (t >= tl.duration() - 0.5) goLive();
 }
 
 /* ------------------------------------------------------------------ */
