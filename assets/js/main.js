@@ -21,22 +21,10 @@ const fullSrc = (i) => `assets/img/full/${pad2(i + 1)}.webp`;
 const query = new URLSearchParams(location.search);
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-// The reference plays two intros: a rainbow arc of reels, and a ring you fly into.
-// Alternate between them on each visit (?intro=arc|ring forces one).
-function pickVariant() {
-  const forced = query.get('intro');
-  if (forced === 'arc' || forced === 'ring') return forced;
-  try {
-    const next = localStorage.getItem('sam.intro') === 'arc' ? 'ring' : 'arc';
-    localStorage.setItem('sam.intro', next);
-    return next;
-  } catch {
-    return Math.random() < 0.5 ? 'arc' : 'ring';
-  }
-}
-const variant = pickVariant();
-const isArc = variant === 'arc';
-document.body.classList.add(`intro-${variant}`);
+// The intro plays like the reference: a rainbow arc of reels and its page first, then it rewinds
+// to the loader and builds a ring the camera flies into, which is where the page stays.
+const intro = { tl: null, switchAt: Infinity };
+const phase = { ring: false };
 
 function formatStat(el, v) {
   const dec = parseInt(el.dataset.dec || '0', 10);
@@ -321,7 +309,9 @@ function bentPlane(w, h, R) {
   return g;
 }
 
-if (isArc) {
+const arcCards = [];
+const ringCards = [];
+{
   const geo = new THREE.PlaneGeometry(1, CARD_ASPECT);
   const size = new THREE.Vector2(1, CARD_ASPECT);
   for (let i = 0; i < ARC.N; i++) {
@@ -332,11 +322,12 @@ if (isArc) {
     const rank = Math.min(i, ARC.N - i);
     const card = { mesh, mat, photo: i % PHOTOS, theta: (i / ARC.N) * TAU, rank, side: i <= ARC.N / 2 ? 1 : -1, p: 0, hover: 0 };
     mesh.userData.card = card;
-    cards.push(card);
+    arcCards.push(card);
     arcGroup.add(mesh);
   }
   scene.add(arcGroup);
-} else {
+}
+{
   const geo = bentPlane(RING.w, RING.h, RING.R);
   const size = new THREE.Vector2(RING.w, RING.h);
   const step = TAU / RING.N;
@@ -350,11 +341,12 @@ if (isArc) {
     const photo = i < PHOTOS ? i : (i - PHOTOS + 7) % PHOTOS;
     const card = { mesh, mat, photo, phi, order: i, p: 0, hover: 0 };
     mesh.userData.card = card;
-    cards.push(card);
+    ringCards.push(card);
     ringGroup.add(mesh);
   }
   scene.add(ringGroup);
 }
+cards.push(...arcCards, ...ringCards);
 
 /* ---------- textures (decoded off the main thread when possible) ---------- */
 
@@ -500,13 +492,10 @@ function measure() {
 
   const fa = (view.w - panel.l - panel.r) / Math.max(1, view.h - panel.t - panel.b);
   const fa0 = view.w / view.h;
-  if (isArc) {
-    layout.arcFrom = arcLoaderPose(fa0);
-    layout.arcTo = arcFinalPose(fa);
-  } else {
-    layout.ringFrom = ringLoaderPose(fa0);
-    layout.ringTo = ringFinalPose(fa);
-  }
+  layout.arcFrom = arcLoaderPose(fa0);
+  layout.arcTo = arcFinalPose(fa);
+  layout.ringFrom = ringLoaderPose(fa0);
+  layout.ringTo = ringFinalPose(fa);
 
   bgCam.right = view.w;
   bgCam.top = view.h;
@@ -567,7 +556,7 @@ function updateArc(dt) {
   arcGroup.position.set(pose.x + pointer.sx * 0.25 * live, pose.yc, 0);
   arcGroup.rotation.set(-pose.tilt + pointer.sy * 0.035 * live, pointer.sx * 0.06 * live, 0);
 
-  for (const c of cards) {
+  for (const c of arcCards) {
     const p = c.p;
     c.mesh.visible = p > 0.001;
     if (!c.mesh.visible) continue;
@@ -608,7 +597,7 @@ function updateRing(dt) {
   ringGroup.rotation.y = ringState.spin;
 
   const R = RING.R;
-  for (const c of cards) {
+  for (const c of ringCards) {
     const p = c.p;
     c.mesh.visible = p > 0.001;
     if (!c.mesh.visible) continue;
@@ -674,6 +663,7 @@ function updateCounter(dt) {
   const k = 1 - Math.exp(-dt * 16);
   counter.cols.forEach((c, i) => {
     const before = c.pos;
+    if (targets[i] < c.pos - 0.5) c.pos = targets[i];
     c.pos += (targets[i] - c.pos) * k;
     if (Math.abs(targets[i] - c.pos) < 0.001) c.pos = targets[i];
     if (c.pos !== before) c.strip.style.transform = `translate3d(0, ${(-c.pos).toFixed(4)}em, 0)`;
@@ -702,8 +692,8 @@ function pick(clientX, clientY) {
 
 function spinBy(pixels) {
   const k = pixels / Math.max(320, frame.w * 0.55);
-  if (isArc) arcState.spin += k;
-  else ringState.spin -= k * 0.8;
+  if (phase.ring) ringState.spin -= k * 0.8;
+  else arcState.spin += k;
 }
 
 canvas.addEventListener('pointermove', (e) => {
@@ -728,7 +718,7 @@ canvas.addEventListener('pointerdown', (e) => {
   if (!live) return;
   canvas.setPointerCapture(e.pointerId);
   drag = { x: e.clientX, y0: e.clientY, t: performance.now(), moved: 0, vel: 0, start: performance.now() };
-  if (isArc) arcState.user = 0; else ringState.user = 0;
+  if (phase.ring) ringState.user = 0; else arcState.user = 0;
   document.body.classList.add('is-dragging');
 });
 function endDrag(e) {
@@ -742,7 +732,7 @@ function endDrag(e) {
     return;
   }
   const v = clamp(d.vel, -4, 4);
-  if (isArc) arcState.user = v; else ringState.user = -v * 0.8;
+  if (phase.ring) ringState.user = -v * 0.8; else arcState.user = v;
 }
 canvas.addEventListener('pointerup', endDrag);
 canvas.addEventListener('pointercancel', endDrag);
@@ -750,7 +740,7 @@ canvas.addEventListener('wheel', (e) => {
   if (!live) return;
   e.preventDefault();
   const d = clamp(e.deltaY + e.deltaX, -120, 120) * 0.004;
-  if (isArc) arcState.user += d; else ringState.user -= d * 0.8;
+  if (phase.ring) ringState.user -= d * 0.8; else arcState.user += d;
 }, { passive: false });
 
 function updateHover(dt) {
@@ -892,67 +882,88 @@ function nameFlip() {
   };
 }
 
-function buildTimeline() {
-  const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } });
-  const chars = $$('.loader-name .ch');
-
-  // name + counter
-  tl.fromTo(chars, { y: 0, yPercent: 112 }, { yPercent: 0, duration: 0.8, stagger: 0.09 }, 0.04);
-  tl.to(counter, { value: 100, duration: 1.15, ease: 'sine.inOut' }, 0);
-
-  if (isArc) {
-    // reels fly out of the centre and fan into a rainbow, top first
-    for (const c of cards) {
-      tl.to(c, { p: 1, duration: 0.6, ease: 'power2.out' }, 0.02 + c.rank * 0.115);
-    }
-  } else {
-    for (const c of cards) {
-      tl.to(c, { p: 1, duration: 0.6, ease: 'power3.out' }, 0.12 + c.order * 0.1);
-    }
-    tl.to(ringState, { speed: 0.12, duration: 1.2, ease: 'sine.in' }, 0.2);
-  }
-
-  // hold until every reel is decoded
-  const gate = isArc ? 2.3 : 2.45;
-  tl.addPause(gate, () => onAllLoaded(() => {
-    if (bg.tex) renderer.initTexture(bg.tex);
-    requestAnimationFrame(() => tl.play());
-  }));
-
-  // backdrop reveal
+// backdrop in, name into the nav, scene framed into the panel, copy in
+function addReveal(tl, gate, first) {
+  const ir = first ? {} : { immediateRender: false };
   tl.to(fx, { reveal: 1, duration: 0.55, ease: 'power2.inOut' }, gate + 0.05);
   tl.to(fx, { zoom: 1, duration: 1.6, ease: 'power2.out' }, gate + 0.05);
   tl.to('.counter', { opacity: 0, filter: 'blur(6px)', y: -8, duration: 0.6, ease: 'power2.inOut' }, gate + 0.1);
   tl.to('.loader-dot', { opacity: 0, duration: 0.3, ease: 'power1.out' }, gate + 0.25);
 
-  // scene transition
-  if (isArc) {
-    tl.to(arcState, { t: 1, duration: 1.3, ease: 'none' }, gate + 0.25);
-    tl.to(arcState, { speed: 0.13, duration: 1.6, ease: 'sine.inOut' }, gate + 0.5);
-  } else {
-    tl.to(ringState, { t: 1, duration: 1.05, ease: 'none' }, gate + 0.12);
-    tl.to(ringState, { speed: 0.21, duration: 1.2, ease: 'sine.inOut' }, gate + 0.4);
-  }
-
-  // name shrinks into the nav
-  const flip = nameFlip();
-  tl.to('.loader-name', { ...flip, duration: 1.0, ease: 'power3.inOut' }, gate + 0.45);
+  tl.to('.loader-name', { ...nameFlip(), duration: 1.0, ease: 'power3.inOut' }, gate + 0.45);
   tl.set('.brand-word', { visibility: 'visible' }, gate + 1.45);
   tl.set('.loader-name', { visibility: 'hidden' }, gate + 1.45);
-  tl.fromTo('.brand-dot', { opacity: 0, x: -6 }, { opacity: 1, x: 0, duration: 0.5 }, gate + 1.45);
-  tl.fromTo(['.crumbs > *', '.mode > *'], { opacity: 0, y: 6 }, { opacity: 1, y: 0, duration: 0.6, stagger: 0.035 }, gate + 1.5);
+  tl.fromTo('.brand-dot', { opacity: 0, x: -6 }, { opacity: 1, x: 0, duration: 0.5, ...ir }, gate + 1.45);
+  tl.fromTo(['.crumbs > *', '.mode > *'], { opacity: 0, y: 6 }, { opacity: 1, y: 0, duration: 0.6, stagger: 0.035, ...ir }, gate + 1.5);
 
-  // frame the scene into the panel
   tl.to(fx, { inset: 1, duration: 0.8, ease: 'power3.inOut', onUpdate: applyInset }, gate + 1.1);
 
-  // copy
-  tl.fromTo('.line-in', { y: 0, yPercent: 115 }, { yPercent: 0, duration: 0.95, stagger: 0.12, ease: 'power3.out' }, gate + 1.35);
+  tl.fromTo('.line-in', { y: 0, yPercent: 115 }, { yPercent: 0, duration: 0.95, stagger: 0.12, ease: 'power3.out', ...ir }, gate + 1.35);
   tl.to('.stat', { opacity: 1, duration: 0.6, stagger: 0.08, ease: 'power2.out' }, gate + 1.6);
   $$('.stat-num').forEach((el, i) => tl.add(countUp(el, 1.9), gate + 1.6 + i * 0.08));
   tl.to('.u', { '--draw': 1, duration: 0.9, stagger: 0.13, ease: 'power3.out' }, gate + 2.05);
   tl.to('.u sup', { opacity: 1, duration: 0.5, stagger: 0.13, ease: 'power2.out' }, gate + 2.25);
+}
 
-  tl.call(goLive, null, gate + 1.9);
+// the reverse: copy out, name back out of the nav, panel opens to full screen, backdrop back to paper
+function addRewind(tl, at) {
+  tl.to('.u sup', { opacity: 0, duration: 0.25, ease: 'power1.in' }, at);
+  tl.to('.u', { '--draw': 0, duration: 0.4, ease: 'power2.in' }, at);
+  tl.to('.stat', { opacity: 0, duration: 0.35, ease: 'power1.in' }, at);
+  tl.to('.line-in', { yPercent: 115, duration: 0.55, stagger: 0.06, ease: 'power3.in' }, at + 0.05);
+  tl.to(['.crumbs > *', '.mode > *', '.brand-dot'], { opacity: 0, duration: 0.3, ease: 'power1.in' }, at);
+
+  tl.set('.loader-name', { visibility: 'visible' }, at + 0.3);
+  tl.set('.brand-word', { visibility: 'hidden' }, at + 0.3);
+  tl.to('.loader-name', { x: 0, y: 0, scale: 1, duration: 0.95, ease: 'power3.inOut' }, at + 0.3);
+  tl.to('.loader-dot', { opacity: 1, duration: 0.3, ease: 'power1.out' }, at + 1.0);
+
+  tl.to(fx, { inset: 0, duration: 0.8, ease: 'power3.inOut', onUpdate: applyInset }, at + 0.2);
+  tl.to(fx, { reveal: 0, duration: 0.7, ease: 'power2.inOut' }, at + 0.3);
+  tl.to(fx, { zoom: 1.06, duration: 0.7, ease: 'power2.inOut' }, at + 0.3);
+}
+
+function buildTimeline() {
+  const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } });
+  const chars = $$('.loader-name .ch');
+
+  /* part 1: reels fly out of the centre and fan into a rainbow, top first */
+  tl.fromTo(chars, { y: 0, yPercent: 112 }, { yPercent: 0, duration: 0.8, stagger: 0.09 }, 0.04);
+  tl.to(counter, { value: 100, duration: 1.15, ease: 'sine.inOut' }, 0);
+  for (const c of arcCards) tl.to(c, { p: 1, duration: 0.6, ease: 'power2.out' }, 0.02 + c.rank * 0.115);
+
+  // hold until every image is decoded, then upload the big backdrop while the scene is still
+  const gate = 2.3;
+  tl.addPause(gate, () => onAllLoaded(() => {
+    if (bg.tex) renderer.initTexture(bg.tex);
+    requestAnimationFrame(() => tl.play());
+  }));
+  addReveal(tl, gate, true);
+  tl.to(arcState, { t: 1, duration: 1.3, ease: 'none' }, gate + 0.25);
+  tl.to(arcState, { speed: 0.13, duration: 1.6, ease: 'sine.inOut' }, gate + 0.5);
+
+  /* hold on the arc page, then rewind to the loader; the arc drops away, outer reels first */
+  const back = gate + 5.0;
+  addRewind(tl, back);
+  tl.to(arcState, { speed: 0, duration: 0.6, ease: 'power1.out' }, back);
+  const maxRank = ARC.N / 2;
+  for (const c of arcCards) tl.to(c, { p: 0, duration: 0.5, ease: 'power2.in' }, back + 0.1 + (maxRank - c.rank) * 0.018);
+  tl.set(counter, { value: 0 }, back + 0.6);
+
+  /* part 2: the counter rolls again while a ring builds, then the camera dives inside it */
+  const ring = back + 1.0;
+  intro.switchAt = back + 0.95;
+  tl.to('.counter', { opacity: 1, filter: 'blur(0px)', y: 0, duration: 0.4, ease: 'power2.out' }, ring - 0.05);
+  tl.to(counter, { value: 100, duration: 1.15, ease: 'sine.inOut' }, ring);
+  for (const c of ringCards) tl.to(c, { p: 1, duration: 0.6, ease: 'power3.out' }, ring + 0.12 + c.order * 0.1);
+  tl.to(ringState, { speed: 0.12, duration: 1.2, ease: 'sine.in' }, ring + 0.2);
+
+  const gate2 = ring + 2.45;
+  addReveal(tl, gate2, false);
+  tl.to(ringState, { t: 1, duration: 1.05, ease: 'none' }, gate2 + 0.12);
+  tl.to(ringState, { speed: 0.21, duration: 1.2, ease: 'sine.inOut' }, gate2 + 0.4);
+
+  tl.call(goLive, null, gate2 + 1.9);
   return tl;
 }
 
@@ -987,9 +998,18 @@ function tick() {
   if (paused) return;
   clock += dt;
 
+  // which scene is on stage follows the timeline, so seeking lands in the right one
+  const ringNow = !!intro.tl && intro.tl.time() >= intro.switchAt;
+  if (ringNow !== phase.ring) {
+    phase.ring = ringNow;
+    document.body.classList.toggle('intro-ring', ringNow);
+  }
+  arcGroup.visible = !phase.ring;
+  ringGroup.visible = phase.ring;
+
   updateCounter(dt);
   updateHover(dt);
-  if (isArc) updateArc(dt); else updateRing(dt);
+  if (phase.ring) updateRing(dt); else updateArc(dt);
   updateCamera();
   updatePetals(dt);
 
@@ -1024,6 +1044,7 @@ async function boot() {
   resize();
 
   const tl = buildTimeline();
+  intro.tl = tl;
   window.addEventListener('resize', resize);
   if (window.visualViewport) window.visualViewport.addEventListener('resize', resize);
 
