@@ -75,7 +75,7 @@ bgPlaceholder.needsUpdate = true;
 const bg = { tex: null };
 
 const view = { w: 1, h: 1, dpr: 1 };
-const panel = { t: 0, r: 0, b: 0, l: 0, radius: 0 };
+const panel = { t: 0, r: 0, b: 0, l: 0 };
 const frame = { x: 0, y: 0, w: 1, h: 1 };
 const fx = { reveal: 0, inset: 0, zoom: 1.06 };
 
@@ -112,7 +112,7 @@ const bgMat = new THREE.ShaderMaterial({
     uniform vec4 uFrame; // x, y (from bottom), w, h in css px
     varying vec2 vUv;
     void main() {
-      // the photo covers the framed panel like object-fit: cover (uv y up)
+      // the photo covers uFrame like object-fit: cover (uv y up)
       vec2 p = vUv * uView - uFrame.xy;
       vec2 disp = vec2(max(uFrame.z, uFrame.w * uImgAspect));
       disp.y = disp.x / uImgAspect;
@@ -135,39 +135,6 @@ const bgMat = new THREE.ShaderMaterial({
 const bgQuad = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), bgMat);
 bgScene.add(bgQuad);
 
-// paints the page colour around the framed panel (rounded, antialiased); drawn last
-const maskScene = new THREE.Scene();
-const maskMat = new THREE.ShaderMaterial({
-  uniforms: {
-    uView: bgMat.uniforms.uView,
-    uFrame: bgMat.uniforms.uFrame,
-    uRadius: { value: 0 },
-    uColor: { value: new THREE.Color(0xefefec) },
-  },
-  vertexShader: bgMat.vertexShader,
-  fragmentShader: /* glsl */`
-    uniform vec2 uView;
-    uniform vec4 uFrame;
-    uniform float uRadius;
-    uniform vec3 uColor;
-    varying vec2 vUv;
-    void main() {
-      vec2 p = vUv * uView - (uFrame.xy + uFrame.zw * 0.5);
-      vec2 q = abs(p) - uFrame.zw * 0.5 + uRadius;
-      float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - uRadius;
-      float a = smoothstep(-0.5, 0.5, d);
-      if (a <= 0.0) discard;
-      gl_FragColor = vec4(uColor, a);
-    }
-  `,
-  transparent: true,
-  depthTest: false,
-  depthWrite: false,
-});
-const maskQuad = new THREE.Mesh(bgQuad.geometry, maskMat);
-maskScene.add(maskQuad);
-const paperColor = new THREE.Color(0xf8f8f6);
-const pageColor = new THREE.Color(0xefefec);
 
 const PETAL_COLORS = ['#ffffff', '#f6b26b', '#fbe3b5', '#f39a4e', '#ffffff', '#f7c873'];
 const petalCount = matchMedia('(max-width: 720px)').matches ? 16 : 28;
@@ -378,14 +345,33 @@ function markLoaded() {
     loadWaiters.splice(0).forEach((fn) => fn());
   }
 }
-// smallest backdrop that still has a pixel for every screen pixel at full screen
-function bgSrc() {
-  const dpr = Math.min(window.devicePixelRatio || 1, 3);
-  const need = Math.max(view.w, view.h * BG_ASPECT) * dpr;
-  const fits = BG_WIDTHS.filter((w) => w <= renderer.capabilities.maxTextureSize);
-  const w = fits.find((x) => x >= need * 0.9) || fits[fits.length - 1];
-  return `assets/img/bg/hills-${w}.webp`;
+// Photo URLs, sized for this screen, and their early downloads come from the inline script in index.html.
+const assets = window.__samAssets || {
+  cards: Array.from({ length: PHOTOS }, (_, i) => cardSrc(i)),
+  bg: 'assets/img/bg/hills-2560.webp',
+  bgWidth: 2560,
+  pre: {},
+};
+
+function fetchBlob(url, fresh) {
+  const early = !fresh && assets.pre[url];
+  return early || fetch(url).then((r) => (r.ok ? r.blob() : Promise.reject(new Error(`${r.status} ${url}`))));
 }
+
+// decoded off the main thread where the browser can
+async function decodeImage(url, fresh = false) {
+  const blob = await fetchBlob(url, fresh);
+  if (typeof createImageBitmap === 'function') {
+    try { return await createImageBitmap(blob); } catch { /* decode through an <img> instead */ }
+  }
+  const img = new Image();
+  img.src = URL.createObjectURL(blob);
+  await img.decode();
+  URL.revokeObjectURL(img.src);
+  return img;
+}
+// an early download that failed gets one fresh try
+const loadImage = (url) => decodeImage(url).catch(() => decodeImage(url, true));
 
 function applyBackdrop(tex) {
   tex.flipY = false;
@@ -399,17 +385,41 @@ function applyBackdrop(tex) {
   bgMat.uniforms.uImgAspect.value = tex.image.width / tex.image.height;
 }
 
+let cardsLoaded = 0;
+const cardWaiters = [];
+function onCardsLoaded(fn) { cardsLoaded >= PHOTOS ? fn() : cardWaiters.push(fn); }
+function cardDone() {
+  cardsLoaded++;
+  if (cardsLoaded >= PHOTOS) cardWaiters.splice(0).forEach((fn) => fn());
+  markLoaded();
+}
+
 function loadTextures() {
-  const useBitmap = typeof createImageBitmap === 'function';
-  const bitmapLoader = useBitmap ? new THREE.ImageBitmapLoader() : null;
-  const imgLoader = new THREE.TextureLoader();
-  const load = (src, apply) => {
-    const viaImage = () => imgLoader.load(src, (t) => { apply(t); markLoaded(); }, undefined, markLoaded);
-    if (bitmapLoader) bitmapLoader.load(src, (bmp) => { apply(new THREE.Texture(bmp)); markLoaded(); }, undefined, viaImage);
-    else viaImage();
+  // a GPU that can't hold the chosen backdrop gets the largest one it can
+  const maxTex = renderer.capabilities.maxTextureSize;
+  const bgUrl = assets.bgWidth <= maxTex
+    ? assets.bg
+    : `assets/img/bg/hills-${BG_WIDTHS.filter((w) => w <= maxTex).pop() || BG_WIDTHS[0]}.webp`;
+  assets.cards.forEach((url, i) => {
+    loadImage(url).then((img) => applyTexture(i, new THREE.Texture(img))).catch(() => {}).finally(cardDone);
+  });
+  loadImage(bgUrl).then((img) => applyBackdrop(new THREE.Texture(img))).catch(() => {}).finally(markLoaded);
+}
+
+// full-size photos for the viewer, fetched one at a time in the background once the intro is done
+function preloadFullPhotos() {
+  const c = navigator.connection;
+  if (c && (c.saveData || /2g/.test(c.effectiveType || ''))) return;
+  const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 120));
+  let i = 0;
+  const next = () => {
+    if (i >= PHOTOS) return;
+    const img = new Image();
+    img.fetchPriority = 'low';
+    img.onload = img.onerror = () => idle(next);
+    img.src = fullSrc(i++);
   };
-  load(bgSrc(), applyBackdrop);
-  for (let i = 0; i < PHOTOS; i++) load(cardSrc(i), (tex) => applyTexture(i, tex));
+  idle(next);
 }
 
 /* ------------------------------------------------------------------ */
@@ -482,11 +492,8 @@ function measure() {
   renderer.setPixelRatio(view.dpr);
   renderer.setSize(view.w, view.h, false);
 
-  const probe = measure.probe || (measure.probe = Object.assign(document.body.appendChild(document.createElement('div')), {
-    style: 'position:absolute;visibility:hidden;pointer-events:none;width:var(--pad);height:var(--radius)',
-  }));
-  panel.l = panel.r = probe.offsetWidth;
-  panel.radius = probe.offsetHeight;
+  // the scene stays full-bleed; once framed, it is composed in the space between the glass bars
+  panel.l = panel.r = 0;
   panel.t = $('.nav').offsetHeight;
   panel.b = $('.foot').offsetHeight;
 
@@ -502,8 +509,6 @@ function measure() {
   bgCam.updateProjectionMatrix();
   bgQuad.position.set(view.w / 2, view.h / 2, 0);
   bgQuad.scale.set(view.w, view.h, 1);
-  maskQuad.position.copy(bgQuad.position);
-  maskQuad.scale.copy(bgQuad.scale);
 }
 
 function resize() {
@@ -514,8 +519,6 @@ function resize() {
 function applyInset() {
   const p = fx.inset;
   const t = panel.t * p, r = panel.r * p, b = panel.b * p, l = panel.l * p;
-  maskMat.uniforms.uRadius.value = panel.radius * p;
-  maskMat.uniforms.uColor.value.lerpColors(paperColor, pageColor, p);
   frame.x = l;
   frame.y = t;
   frame.w = view.w - l - r;
@@ -882,7 +885,7 @@ function nameFlip() {
   };
 }
 
-// backdrop in, name into the nav, scene framed into the panel, copy in
+// backdrop in, name into the nav, glass bars in, scene framed between them, copy in
 function addReveal(tl, gate, first) {
   const ir = first ? {} : { immediateRender: false };
   tl.to(fx, { reveal: 1, duration: 0.55, ease: 'power2.inOut' }, gate + 0.05);
@@ -897,6 +900,11 @@ function addReveal(tl, gate, first) {
   tl.fromTo(['.crumbs > *', '.mode > *'], { opacity: 0, y: 6 }, { opacity: 1, y: 0, duration: 0.6, stagger: 0.035, ...ir }, gate + 1.5);
 
   tl.to(fx, { inset: 1, duration: 0.8, ease: 'power3.inOut', onUpdate: applyInset }, gate + 1.1);
+  // frosted glass bars slide in over the scene, a light sheen runs across them
+  tl.fromTo(['.nav .glass', '.foot .glass'], { opacity: 0 }, { opacity: 1, duration: 0.7, ease: 'power2.out', ...ir }, gate + 1.05);
+  tl.fromTo('.nav .glass', { yPercent: -100 }, { yPercent: 0, duration: 0.9, ease: 'expo.out', ...ir }, gate + 1.05);
+  tl.fromTo('.foot .glass', { yPercent: 100 }, { yPercent: 0, duration: 0.9, ease: 'expo.out', ...ir }, gate + 1.12);
+  tl.fromTo('.sheen', { xPercent: -120 }, { xPercent: 260, duration: 1.5, stagger: 0.14, ease: 'power2.inOut', ...ir }, gate + 1.4);
 
   tl.fromTo('.line-in', { y: 0, yPercent: 115 }, { yPercent: 0, duration: 0.95, stagger: 0.12, ease: 'power3.out', ...ir }, gate + 1.35);
   tl.to('.stat', { opacity: 1, duration: 0.6, stagger: 0.08, ease: 'power2.out' }, gate + 1.6);
@@ -905,7 +913,7 @@ function addReveal(tl, gate, first) {
   tl.to('.u sup', { opacity: 1, duration: 0.5, stagger: 0.13, ease: 'power2.out' }, gate + 2.25);
 }
 
-// the reverse: copy out, name back out of the nav, panel opens to full screen, backdrop back to paper
+// the reverse: copy out, name back out of the nav, glass bars away, backdrop back to paper
 function addRewind(tl, at) {
   tl.to('.u sup', { opacity: 0, duration: 0.25, ease: 'power1.in' }, at);
   tl.to('.u', { '--draw': 0, duration: 0.4, ease: 'power2.in' }, at);
@@ -919,17 +927,22 @@ function addRewind(tl, at) {
   tl.to('.loader-dot', { opacity: 1, duration: 0.3, ease: 'power1.out' }, at + 1.0);
 
   tl.to(fx, { inset: 0, duration: 0.8, ease: 'power3.inOut', onUpdate: applyInset }, at + 0.2);
+  tl.to('.nav .glass', { yPercent: -100, opacity: 0, duration: 0.6, ease: 'power3.in' }, at + 0.15);
+  tl.to('.foot .glass', { yPercent: 100, opacity: 0, duration: 0.6, ease: 'power3.in' }, at + 0.2);
   tl.to(fx, { reveal: 0, duration: 0.7, ease: 'power2.inOut' }, at + 0.3);
   tl.to(fx, { zoom: 1.06, duration: 0.7, ease: 'power2.inOut' }, at + 0.3);
 }
 
+// the name and the counter start straight away, while the photos are still arriving
+function playLoader() {
+  gsap.fromTo('.loader-name .ch', { y: 0, yPercent: 112 }, { yPercent: 0, duration: 0.8, stagger: 0.09, ease: 'power3.out', delay: 0.04 });
+  gsap.to(counter, { value: 100, duration: 1.15, ease: 'sine.inOut' });
+}
+
 function buildTimeline() {
   const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } });
-  const chars = $$('.loader-name .ch');
 
   /* part 1: reels fly out of the centre and fan into a rainbow, top first */
-  tl.fromTo(chars, { y: 0, yPercent: 112 }, { yPercent: 0, duration: 0.8, stagger: 0.09 }, 0.04);
-  tl.to(counter, { value: 100, duration: 1.15, ease: 'sine.inOut' }, 0);
   for (const c of arcCards) tl.to(c, { p: 1, duration: 0.6, ease: 'power2.out' }, 0.02 + c.rank * 0.115);
 
   // hold until every image is decoded, then upload the big backdrop while the scene is still
@@ -968,13 +981,17 @@ function buildTimeline() {
 }
 
 function goLive() {
+  if (live) return;
   live = true;
   document.body.classList.add('is-live');
+  preloadFullPhotos();
 }
 
 // jump straight to a point of the intro without firing its pause / callbacks
 function seekIntro(tl, t) {
   tl.pause();
+  gsap.set('.loader-name .ch', { y: 0, yPercent: 0 });
+  counter.value = 100;
   tl.seek(t, true);
   applyInset();
   // callbacks are suppressed while seeking, so settle the counters by hand
@@ -1016,13 +1033,12 @@ function tick() {
   bgMat.uniforms.uReveal.value = fx.reveal;
   bgMat.uniforms.uZoom.value = fx.zoom;
   bgMat.uniforms.uView.value.set(view.w, view.h);
-  bgMat.uniforms.uFrame.value.set(frame.x, view.h - frame.y - frame.h, frame.w, frame.h);
+  bgMat.uniforms.uFrame.value.set(0, 0, view.w, view.h);
 
   renderer.clear();
   renderer.render(bgScene, bgCam);
   renderer.clearDepth();
   renderer.render(scene, camera);
-  if (fx.inset > 0.0005) renderer.render(maskScene, bgCam);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1071,7 +1087,12 @@ async function boot() {
     });
     return;
   }
-  tl.play();
+  playLoader();
+  // the reels fly out once their photos are decoded, so none arrives blank (capped for very slow networks)
+  const cardsReady = new Promise((resolve) => onCardsLoaded(resolve));
+  const atLeast = new Promise((resolve) => setTimeout(resolve, 250));
+  const cap = new Promise((resolve) => setTimeout(resolve, 8000));
+  Promise.race([Promise.all([cardsReady, atLeast]), cap]).then(() => tl.play());
 }
 
 boot();
