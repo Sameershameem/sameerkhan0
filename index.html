@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Sam.</title>
+  <meta name="description" content="Sam — portfolio. Reels, places and moments, arranged in a ring of cards above the clouds.">
+  <meta name="theme-color" content="#efefec">
+  <meta property="og:title" content="Sam.">
+  <meta property="og:description" content="Reels, places and moments, arranged in a ring of cards above the clouds.">
+  <meta property="og:image" content="assets/img/full/01.webp">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23111'/%3E%3Ctext x='32' y='45' text-anchor='middle' font-family='Georgia,serif' font-size='38' fill='%23f8f8f6'%3ES%3C/text%3E%3C/svg%3E">
+  <link rel="preload" href="assets/fonts/instrument-serif-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="assets/fonts/geist-mono-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+  <canvas id="stage" aria-hidden="true"></canvas>
+
+  <!-- Loader -->
+  <div class="loader" aria-hidden="true">
+    <div class="loader-name"><span class="loader-word"><span class="ch">S</span><span class="ch">a</span><span class="ch">m</span></span><span class="loader-dotwrap"><span class="ch loader-dot">.</span></span></div>
+    <div class="counter">
+      <div class="counter-digits"><span class="col" data-col="0"></span><span class="col" data-col="1"></span><span class="col" data-col="2"></span></div>
+      <span class="counter-pct">%</span>
+      <span class="counter-label">Loading reels</span>
+    </div>
+  </div>
+
+  <!-- Nav -->
+  <header class="nav">
+    <a class="brand" href="./" aria-label="Sam — home"><span class="brand-word">Sam</span><span class="brand-dot">.</span></a>
+    <nav class="crumbs" aria-label="Sections">
+      <span class="sep">/</span><a href="#build">Build</a><span class="sep">/</span><a href="#brand">Brand</a><span class="sep">/</span><a href="#learn">Learn</a>
+    </nav>
+    <div class="mode" role="group" aria-label="Mode">
+      <button type="button" class="mode-btn is-active" aria-pressed="true">Human</button><span class="sep">/</span><button type="button" class="mode-btn" aria-pressed="false">Agent</button>
+    </div>
+  </header>
+
+  <!-- Footer -->
+  <footer class="foot">
+    <p class="tagline">
+      <span class="line"><span class="line-in">I build products for <a class="u" style="--u:#2f55d4" href="#founders">founders<sup>01</sup></a>, campaigns for <a class="u" style="--u:#e0342f" href="#brands">brands<sup>02</sup></a></span></span>
+      <span class="line"><span class="line-in">and free roadmaps for <a class="u" style="--u:#f2b31b" href="#students">students<sup>03</sup></a>. Or just <a class="u" style="--u:#141414" href="#ai">talk to my AI<sup>04</sup></a>.</span></span>
+    </p>
+    <dl class="stats">
+      <div class="stat"><dt class="sr-only">Frames</dt><dd><span class="stat-num" data-to="15" data-pad="2">00</span><span class="stat-label">frames</span></dd></div>
+      <div class="stat"><dt class="sr-only">View</dt><dd><span class="stat-num" data-to="360" data-suffix="°">0°</span><span class="stat-label">view</span></dd></div>
+    </dl>
+  </footer>
+
+  <!-- Keyboard / screen-reader access to the photos -->
+  <ul class="sr-only" id="photo-list" aria-label="Photos"></ul>
+
+  <!-- Lightbox -->
+  <div class="lightbox" role="dialog" aria-modal="true" aria-label="Photo viewer" hidden>
+    <button type="button" class="lb-close" aria-label="Close">Close</button>
+    <figure class="lb-figure"><img class="lb-img" alt=""></figure>
+    <div class="lb-bar">
+      <button type="button" class="lb-prev" aria-label="Previous photo">&larr;</button>
+      <span class="lb-count">01 / 15</span>
+      <button type="button" class="lb-next" aria-label="Next photo">&rarr;</button>
+    </div>
+  </div>
+
+  <script src="assets/vendor/gsap.min.js"></script>
+  <script type="module" src="assets/js/main.js"></script>
+</body>
+</html>
