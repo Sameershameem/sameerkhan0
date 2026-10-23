@@ -844,32 +844,35 @@ $$('.mode-btn').forEach((btn) => btn.addEventListener('click', () => {
 
 /* ---------- music ---------- */
 
-// Browsers only allow sound after the visitor interacts, so the score starts on the first
-// click, tap or key press anywhere (unless they muted it on an earlier visit). The nav button toggles it.
+// The score starts as the page opens wherever the browser allows sound on its own; elsewhere it
+// starts on the first tap, click or key press anywhere. The nav button mutes it for this visit.
 const music = createMusic();
 const soundBtn = $('.sound');
-const soundPref = {
-  get() { try { return localStorage.getItem('sam.sound'); } catch { return null; } },
-  set(v) { try { localStorage.setItem('sam.sound', v); } catch { /* private mode */ } },
-};
+const soundLabel = $('.sound-label');
 function showSound() {
-  soundBtn.classList.toggle('is-on', music.on);
+  const waiting = music.on && !music.audible;
+  soundBtn.classList.toggle('is-on', music.audible);
+  soundBtn.classList.toggle('is-waiting', waiting);
   soundBtn.setAttribute('aria-pressed', String(music.on));
+  soundLabel.textContent = waiting ? 'Tap for sound' : 'Sound';
 }
+music.onChange(showSound);
 soundBtn.addEventListener('click', () => {
-  if (music.on) music.pause(); else music.play();
-  soundPref.set(music.on ? 'on' : 'off');
+  if (music.on && !music.audible) music.unlock(); // still blocked: this tap is what lets it play
+  else if (music.on) music.pause();
+  else music.play();
   showSound();
 });
-function firstGesture(e) {
-  window.removeEventListener('pointerdown', firstGesture, true);
-  window.removeEventListener('keydown', firstGesture, true);
-  if (soundBtn.contains(e.target) || soundPref.get() === 'off') return;
-  music.play();
-  showSound();
+// a touch only counts as an interaction once the finger lifts, so listen for the whole gesture
+const GESTURES = ['pointerdown', 'pointerup', 'mousedown', 'touchend', 'click', 'keydown'];
+function onGesture(e) {
+  if (!soundBtn.contains(e.target)) music.unlock();
 }
-window.addEventListener('pointerdown', firstGesture, true);
-window.addEventListener('keydown', firstGesture, true);
+GESTURES.forEach((type) => window.addEventListener(type, onGesture, { capture: true, passive: true }));
+music.onChange(() => {
+  if (music.audible) GESTURES.forEach((type) => window.removeEventListener(type, onGesture, { capture: true }));
+});
+music.play();
 
 /* ------------------------------------------------------------------ */
 /* Timeline                                                            */
