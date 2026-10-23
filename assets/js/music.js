@@ -361,6 +361,8 @@ export function buildScore(ctx, out, { start = ctx.currentTime, seed = 1 } = {})
 }
 
 // Live player with a fade in/out; schedules a few seconds ahead while playing.
+// play() may be called before the visitor has interacted: where the browser blocks sound, the
+// context waits suspended, losing nothing, until unlock() is called from a tap, click or key press.
 export function createMusic() {
   let ctx = null;
   let master = null;
@@ -369,6 +371,8 @@ export function createMusic() {
   let timer = 0;
   let on = false;
   let pausedByHidden = false;
+  const listeners = new Set();
+  const emit = () => listeners.forEach((fn) => fn());
 
   function ensure() {
     if (ctx) return true;
@@ -377,12 +381,17 @@ export function createMusic() {
     // play through the iPhone's silent switch, like a video would
     try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch { /* not supported */ }
     ctx = new AC({ latencyHint: 'playback' });
+    ctx.onstatechange = emit;
     master = masterChain(ctx);
     start = ctx.currentTime + 0.1;
     score = buildScore(ctx, master, { start, seed: (Math.random() * 2 ** 31) | 0 });
     return true;
   }
   const pump = () => score.scheduleUntil(ctx.currentTime - start + 3);
+  const loop = (run) => {
+    clearInterval(timer);
+    if (run) timer = setInterval(pump, 500);
+  };
   const fade = (to, seconds) => {
     const g = master.gain;
     const now = ctx.currentTime;
@@ -391,15 +400,20 @@ export function createMusic() {
     g.linearRampToValueAtTime(to, now + seconds);
   };
 
+  // resume() only takes effect once the browser allows sound (autoplay, or after a gesture)
+  function unlock() {
+    if (!ctx || !on || document.hidden) return;
+    const p = ctx.resume();
+    if (p && p.then) p.then(emit, () => {});
+  }
   function play() {
-    if (!ensure()) return false;
+    if (!ensure()) return;
     on = true;
-    const resumed = ctx.resume(); // must be called inside the click/tap handler
     pump();
-    clearInterval(timer);
-    timer = setInterval(pump, 500);
+    loop(true);
     fade(LEVEL, 3.5);
-    return resumed;
+    unlock();
+    emit();
   }
   function pause() {
     if (!ctx || !on) return;
@@ -407,9 +421,10 @@ export function createMusic() {
     fade(0, 0.9);
     setTimeout(() => {
       if (on) return;
-      clearInterval(timer);
+      loop(false);
       ctx.suspend();
     }, 1000);
+    emit();
   }
 
   // stop in the background, pick up again on return
@@ -417,14 +432,14 @@ export function createMusic() {
     if (!ctx) return;
     if (document.hidden && on) {
       pausedByHidden = true;
-      clearInterval(timer);
+      loop(false);
       ctx.suspend();
     } else if (!document.hidden && pausedByHidden) {
       pausedByHidden = false;
       if (on) {
-        ctx.resume();
         pump();
-        timer = setInterval(pump, 500);
+        loop(true);
+        unlock();
       }
     }
   });
@@ -432,6 +447,9 @@ export function createMusic() {
   return {
     play,
     pause,
+    unlock,
+    onChange(fn) { listeners.add(fn); },
     get on() { return on; },
+    get audible() { return on && !!ctx && ctx.state === 'running'; },
   };
 }

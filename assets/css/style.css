@@ -224,7 +224,11 @@ body.is-live.is-dragging #stage { cursor: grabbing; }
   opacity: 0;
   transition: color .3s;
 }
-.sound:hover, .sound:focus-visible, .sound.is-on { color: var(--ink); }
+.sound:hover, .sound:focus-visible, .sound.is-on, .sound.is-waiting { color: var(--ink); }
+.sound.is-waiting .sound-label { animation: hint 1.6s ease-in-out infinite; }
+@keyframes hint {
+  50% { opacity: .45; }
+}
 .bars {
   display: inline-flex;
   align-items: flex-end;
@@ -251,6 +255,7 @@ body.is-live.is-dragging #stage { cursor: grabbing; }
 }
 @media (prefers-reduced-motion: reduce) {
   .sound.is-on .bars i { animation: none; transform: scaleY(.7); }
+  .sound.is-waiting .sound-label { animation: none; }
 }
 
 /* ---------- Lightbox ---------- */
