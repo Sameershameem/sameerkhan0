@@ -15,9 +15,10 @@
 
 :root {
   --paper: #f8f8f6;
-  --bg: #efefec;
   --ink: #111110;
-  --muted: #8d8d88;
+  --muted: rgba(17, 17, 16, .58); /* reads on paper and on the glass bars alike */
+  --glass-tint: rgba(255, 255, 255, .24);
+  --glass-edge: rgba(255, 255, 255, .6);
   --serif: "Instrument Serif", "Times New Roman", Times, serif;
   --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --pad: clamp(8px, 1.05vw, 16px);
@@ -169,6 +170,36 @@ body.is-live.is-dragging #stage { cursor: grabbing; }
   pointer-events: none;
 }
 .nav > * { pointer-events: auto; }
+
+/* ---------- Glass bars ---------- */
+.glass {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  opacity: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, .14), var(--glass-tint));
+  -webkit-backdrop-filter: blur(18px) saturate(1.25);
+  backdrop-filter: blur(18px) saturate(1.25);
+  will-change: transform, opacity;
+}
+.nav .glass {
+  background: linear-gradient(180deg, var(--glass-tint), rgba(255, 255, 255, .14));
+  box-shadow: inset 0 -1px 0 var(--glass-edge), 0 12px 32px -22px rgba(16, 40, 24, .45);
+}
+.foot .glass {
+  box-shadow: inset 0 1px 0 var(--glass-edge), 0 -12px 32px -22px rgba(16, 40, 24, .45);
+}
+.sheen {
+  position: absolute;
+  top: 0; bottom: 0; left: 0;
+  width: 40%;
+  background: linear-gradient(105deg, transparent 15%, rgba(255, 255, 255, .42) 50%, transparent 85%);
+  transform: translateX(-120%);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass { background: rgba(248, 248, 246, .86); }
+}
 
 .brand {
   font-size: 1em;
