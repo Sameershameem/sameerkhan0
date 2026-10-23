@@ -1,5 +1,4 @@
 import * as THREE from '../vendor/three.module.min.js';
-import { createSky } from './sky.js';
 
 const gsap = window.gsap;
 const $ = (s, el = document) => el.querySelector(s);
@@ -10,6 +9,11 @@ const TAU = Math.PI * 2;
 THREE.ColorManagement.enabled = false;
 
 const PHOTOS = 15;
+// backdrop photo: size variants (px wide), aspect, and the point that stays in view when cropped
+const BG_WIDTHS = [1600, 2560, 3840];
+const BG_ASPECT = 1.5;
+const BG_POS = { x: 0.5, y: 0.3 }; // like CSS object-position, y from the top
+const BG_FOCUS = { x: 0.5, y: 0.68 }; // zoom anchor (the hill crest), y from the bottom
 const pad2 = (n) => String(n).padStart(2, '0');
 const cardSrc = (i) => `assets/img/cards/${pad2(i + 1)}.webp`;
 const fullSrc = (i) => `assets/img/full/${pad2(i + 1)}.webp`;
@@ -77,23 +81,27 @@ renderer.autoClear = false;
 renderer.setClearColor(0xf8f8f6, 1);
 const maxAniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
 canvas.addEventListener('webglcontextlost', (e) => e.preventDefault());
-canvas.addEventListener('webglcontextrestored', () => renderSky(true));
 
-const sky = createSky(renderer);
+const bgPlaceholder = new THREE.DataTexture(new Uint8Array([120, 170, 220, 255]), 1, 1);
+bgPlaceholder.needsUpdate = true;
+const bg = { tex: null };
 
 const view = { w: 1, h: 1, dpr: 1 };
 const panel = { t: 0, r: 0, b: 0, l: 0, radius: 0 };
 const frame = { x: 0, y: 0, w: 1, h: 1 };
 const fx = { reveal: 0, inset: 0, zoom: 1.06 };
 
-/* ---------- background: sky + drifting petals (pixel space) ---------- */
+/* ---------- background: hills photo + drifting petals (pixel space) ---------- */
 
 const bgScene = new THREE.Scene();
 const bgCam = new THREE.OrthographicCamera(0, 1, 1, 0, -10, 10);
 
 const bgMat = new THREE.ShaderMaterial({
   uniforms: {
-    uSky: { value: sky.texture },
+    uBg: { value: bgPlaceholder },
+    uImgAspect: { value: BG_ASPECT },
+    uPos: { value: new THREE.Vector2(BG_POS.x, BG_POS.y) },
+    uFocus: { value: new THREE.Vector2(BG_FOCUS.x, BG_FOCUS.y) },
     uReveal: { value: 0 },
     uZoom: { value: 1.06 },
     uPaper: { value: new THREE.Vector3(0.973, 0.973, 0.965) },
@@ -105,7 +113,10 @@ const bgMat = new THREE.ShaderMaterial({
     void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
   `,
   fragmentShader: /* glsl */`
-    uniform sampler2D uSky;
+    uniform sampler2D uBg;
+    uniform float uImgAspect;
+    uniform vec2 uPos;
+    uniform vec2 uFocus;
     uniform float uReveal;
     uniform float uZoom;
     uniform vec3 uPaper;
@@ -113,18 +124,21 @@ const bgMat = new THREE.ShaderMaterial({
     uniform vec4 uFrame; // x, y (from bottom), w, h in css px
     varying vec2 vUv;
     void main() {
-      // the sky covers the framed panel, anchored to its bottom so the cloud band stays in view
+      // the photo covers the framed panel like object-fit: cover (uv y up)
       vec2 p = vUv * uView - uFrame.xy;
-      float s = max(uFrame.z / uView.x, uFrame.w / uView.y);
-      vec2 uv = vec2((p.x - (uFrame.z - uView.x * s) * 0.5) / (uView.x * s), p.y / (uView.y * s));
-      uv = (uv - vec2(0.5, 0.35)) / uZoom + vec2(0.5, 0.35);
-      vec3 skyCol = texture2D(uSky, uv).rgb;
+      vec2 disp = vec2(max(uFrame.z, uFrame.w * uImgAspect));
+      disp.y = disp.x / uImgAspect;
+      vec2 off = (uFrame.zw - disp) * vec2(uPos.x, 1.0 - uPos.y);
+      vec2 uv = (p - off) / disp;
+      uv = (uv - uFocus) / uZoom + uFocus;
+      // negative lod bias keeps the grass crisp when the photo is drawn smaller than its pixels
+      vec3 bgCol = texture2D(uBg, vec2(uv.x, 1.0 - uv.y), -0.5).rgb;
       // soft bloom outward from the middle of the scene
       float d = length(vUv - vec2(0.5, 0.42));
       float e = uReveal * 1.45;
       float m = 1.0 - smoothstep(e - 0.4, e, d);
       m *= smoothstep(0.0, 0.08, uReveal);
-      gl_FragColor = vec4(mix(uPaper, skyCol, m), 1.0);
+      gl_FragColor = vec4(mix(uPaper, bgCol, m), 1.0);
     }
   `,
   depthTest: false,
@@ -167,7 +181,7 @@ maskScene.add(maskQuad);
 const paperColor = new THREE.Color(0xf8f8f6);
 const pageColor = new THREE.Color(0xefefec);
 
-const PETAL_COLORS = ['#f6c344', '#f39236', '#e5533b', '#f7d96d', '#ee7a55', '#9ccf5a'];
+const PETAL_COLORS = ['#ffffff', '#f6b26b', '#fbe3b5', '#f39a4e', '#ffffff', '#f7c873'];
 const petalCount = matchMedia('(max-width: 720px)').matches ? 16 : 28;
 const petalGeo = new THREE.BufferGeometry();
 petalGeo.setAttribute('position', new THREE.Float32BufferAttribute([0, 1, 0, 0.42, 0.1, 0, 0, -1, 0, -0.42, -0.1, 0], 3));
@@ -344,6 +358,7 @@ if (isArc) {
 
 /* ---------- textures (decoded off the main thread when possible) ---------- */
 
+const TO_LOAD = PHOTOS + 1; // reels + backdrop
 let loadedCount = 0;
 let allLoaded = false;
 const loadWaiters = [];
@@ -366,23 +381,43 @@ function applyTexture(i, tex) {
 }
 function markLoaded() {
   loadedCount++;
-  if (loadedCount >= PHOTOS && !allLoaded) {
+  if (loadedCount >= TO_LOAD && !allLoaded) {
     allLoaded = true;
     loadWaiters.splice(0).forEach((fn) => fn());
   }
 }
+// smallest backdrop that still has a pixel for every screen pixel at full screen
+function bgSrc() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  const need = Math.max(view.w, view.h * BG_ASPECT) * dpr;
+  const fits = BG_WIDTHS.filter((w) => w <= renderer.capabilities.maxTextureSize);
+  const w = fits.find((x) => x >= need * 0.9) || fits[fits.length - 1];
+  return `assets/img/bg/hills-${w}.webp`;
+}
+
+function applyBackdrop(tex) {
+  tex.flipY = false;
+  tex.anisotropy = 1; // drawn flat to the screen, so anisotropic filtering would only cost time
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = true;
+  tex.needsUpdate = true;
+  bg.tex = tex;
+  bgMat.uniforms.uBg.value = tex;
+  bgMat.uniforms.uImgAspect.value = tex.image.width / tex.image.height;
+}
+
 function loadTextures() {
   const useBitmap = typeof createImageBitmap === 'function';
   const bitmapLoader = useBitmap ? new THREE.ImageBitmapLoader() : null;
   const imgLoader = new THREE.TextureLoader();
-  for (let i = 0; i < PHOTOS; i++) {
-    const viaImage = () => imgLoader.load(cardSrc(i), (t) => { applyTexture(i, t); markLoaded(); }, undefined, markLoaded);
-    if (bitmapLoader) {
-      bitmapLoader.load(cardSrc(i), (bmp) => { applyTexture(i, new THREE.Texture(bmp)); markLoaded(); }, undefined, viaImage);
-    } else {
-      viaImage();
-    }
-  }
+  const load = (src, apply) => {
+    const viaImage = () => imgLoader.load(src, (t) => { apply(t); markLoaded(); }, undefined, markLoaded);
+    if (bitmapLoader) bitmapLoader.load(src, (bmp) => { apply(new THREE.Texture(bmp)); markLoaded(); }, undefined, viaImage);
+    else viaImage();
+  };
+  load(bgSrc(), applyBackdrop);
+  for (let i = 0; i < PHOTOS; i++) load(cardSrc(i), (tex) => applyTexture(i, tex));
 }
 
 /* ------------------------------------------------------------------ */
@@ -450,7 +485,8 @@ function ringFinalPose(fa) {
 function measure() {
   view.w = Math.max(1, canvas.clientWidth);
   view.h = Math.max(1, canvas.clientHeight);
-  view.dpr = Math.min(window.devicePixelRatio || 1, 2);
+  // phones get their full pixel density so the photos stay sharp; big screens cap at 2x
+  view.dpr = Math.min(window.devicePixelRatio || 1, view.w * view.h < 600000 ? 3 : 2);
   renderer.setPixelRatio(view.dpr);
   renderer.setSize(view.w, view.h, false);
 
@@ -481,21 +517,8 @@ function measure() {
   maskQuad.scale.copy(bgQuad.scale);
 }
 
-let skyTimer = 0;
-const skySize = { w: 0, h: 0 };
-function renderSky(force) {
-  const grew = view.w > skySize.w * 1.15 || view.h > skySize.h * 1.15;
-  const reshaped = Math.abs(Math.log((view.w / view.h) / (skySize.w / skySize.h || 1))) > 0.15;
-  if (!force && !grew && !reshaped) return;
-  skySize.w = view.w;
-  skySize.h = view.h;
-  sky.render(view.w, view.h, view.dpr, force);
-}
-function resize(immediateSky) {
+function resize() {
   measure();
-  clearTimeout(skyTimer);
-  if (immediateSky) renderSky(true);
-  else skyTimer = setTimeout(() => renderSky(false), 140);
   applyInset();
 }
 
@@ -645,7 +668,7 @@ const counter = { value: 1, cols: [] };
   });
 })();
 function updateCounter(dt) {
-  const shown = allLoaded ? counter.value : Math.min(counter.value, 3 + 96 * (loadedCount / PHOTOS));
+  const shown = allLoaded ? counter.value : Math.min(counter.value, 3 + 96 * (loadedCount / TO_LOAD));
   const v = Math.round(clamp(shown, 0, 100));
   const targets = [Math.floor(v / 100), Math.floor(v / 10), v];
   const k = 1 - Math.exp(-dt * 16);
@@ -891,9 +914,12 @@ function buildTimeline() {
 
   // hold until every reel is decoded
   const gate = isArc ? 2.3 : 2.45;
-  tl.addPause(gate, () => onAllLoaded(() => requestAnimationFrame(() => tl.play())));
+  tl.addPause(gate, () => onAllLoaded(() => {
+    if (bg.tex) renderer.initTexture(bg.tex);
+    requestAnimationFrame(() => tl.play());
+  }));
 
-  // sky reveal
+  // backdrop reveal
   tl.to(fx, { reveal: 1, duration: 0.55, ease: 'power2.inOut' }, gate + 0.05);
   tl.to(fx, { zoom: 1, duration: 1.6, ease: 'power2.out' }, gate + 0.05);
   tl.to('.counter', { opacity: 0, filter: 'blur(6px)', y: -8, duration: 0.6, ease: 'power2.inOut' }, gate + 0.1);
@@ -984,7 +1010,7 @@ function tick() {
 /* ------------------------------------------------------------------ */
 
 async function boot() {
-  resize(true);
+  resize();
   loadTextures();
 
   // wait for the type so the name never swaps fonts mid-animation (capped so slow fonts never block)
@@ -995,11 +1021,11 @@ async function boot() {
     ]).catch(() => {})
     : Promise.resolve();
   await Promise.race([fonts, new Promise((r) => setTimeout(r, 1500))]);
-  resize(true);
+  resize();
 
   const tl = buildTimeline();
-  window.addEventListener('resize', () => resize(false));
-  if (window.visualViewport) window.visualViewport.addEventListener('resize', () => resize(false));
+  window.addEventListener('resize', resize);
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', resize);
 
   last = performance.now();
   gsap.ticker.add(tick);
