@@ -1,5 +1,4 @@
 import * as THREE from '../vendor/three.module.min.js';
-import { createMusic } from './music.js';
 
 const gsap = window.gsap;
 const $ = (s, el = document) => el.querySelector(s);
@@ -17,6 +16,17 @@ const BG_FOCUS = { x: 0.5, y: 0.68 }; // zoom anchor (the hill crest), y from th
 const pad2 = (n) => String(n).padStart(2, '0');
 const cardSrc = (i) => `assets/img/work/card/${pad2(i + 1)}.webp`;
 const fullSrc = (i) => `assets/img/work/full/${pad2(i + 1)}.webp`;
+const PORTRAIT_SRC = 'assets/img/saima/saima.webp';
+
+// Saima's cut-out, measured from the image: fractions of its width (w) or height (h)
+const FIG = {
+  aspect: 775 / 1448, // width / height
+  headX: 0.54, // centre of her head (w)
+  headW: 0.27, // width of her head and scarf at the brow (w)
+  headTop: 0.025, // top of her head, from the image top (h)
+  chin: 0.18, // chin, from the image top (h)
+  bodyHalf: 0.4, // half the figure's width where the scarf drapes over her shoulders (w)
+};
 
 // The designs, in order, from the JSON in index.html: title, client, type, aspect, field colour, ink.
 const WORKS = (() => {
@@ -26,27 +36,34 @@ const PHOTOS = WORKS.length;
 
 const query = new URLSearchParams(location.search);
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const finePointer = matchMedia('(pointer: fine)').matches;
 
-// The intro plays like the reference: a rainbow arc of reels and its page first, then it rewinds
-// to the loader and builds a ring the camera flies into, which is where the page stays.
-const intro = { tl: null, switchAt: Infinity };
-const phase = { ring: false };
+const intro = { tl: null };
 
-// No WebGL: show the photos as a simple scrolling strip instead of the 3D scene.
+// No WebGL: the portrait and name as plain page content, and the designs as a scrolling strip.
 function fallback() {
   document.body.classList.add('no-webgl');
+  const hero = $('.hero');
+  const name = document.createElement('p');
+  name.className = 'fallback-name';
+  name.innerHTML = 'Saima <em>Ahmed</em>';
+  const img = new Image();
+  img.className = 'fallback-portrait';
+  img.src = PORTRAIT_SRC;
+  img.alt = 'Saima Ahmed';
+  hero.append(name, img);
   const strip = document.createElement('div');
   strip.className = 'fallback';
   WORKS.forEach((w, i) => {
-    const img = new Image();
-    img.src = cardSrc(i);
-    img.alt = w.client ? `${w.title}, ${w.client}` : w.title;
-    img.loading = 'lazy';
-    strip.appendChild(img);
+    const im = new Image();
+    im.src = cardSrc(i);
+    im.alt = w.client ? `${w.title}, ${w.client}` : w.title;
+    im.loading = 'lazy';
+    strip.appendChild(im);
   });
-  $('.hero').appendChild(strip);
+  $('.work').appendChild(strip);
   $('.brand-word').style.visibility = 'visible';
-  gsap.set(['.brand-dot', '.sound', '.role'], { opacity: 1 });
+  gsap.set(['.brand-dot', '.nav-work'], { opacity: 1 });
   document.documentElement.classList.remove('is-locked');
   renderContact();
   drawDoodles();
@@ -60,7 +77,8 @@ function fallback() {
 const canvas = $('#stage');
 let renderer;
 try {
-  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+  // dense screens don't need multisampling: the cards and the cut-out antialias their own edges
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: (window.devicePixelRatio || 1) < 1.5, powerPreference: 'high-performance' });
 } catch (err) {
   fallback();
   throw err;
@@ -73,6 +91,8 @@ canvas.addEventListener('webglcontextlost', (e) => e.preventDefault());
 
 const bgPlaceholder = new THREE.DataTexture(new Uint8Array([120, 170, 220, 255]), 1, 1);
 bgPlaceholder.needsUpdate = true;
+const clearTex = new THREE.DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1);
+clearTex.needsUpdate = true;
 const bg = { tex: null };
 
 const view = { w: 1, h: 1, dpr: 1 };
@@ -165,7 +185,6 @@ const bgMat = new THREE.ShaderMaterial({
 const bgQuad = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), bgMat);
 bgScene.add(bgQuad);
 
-
 const PETAL_COLORS = ['#ffffff', '#f6b26b', '#fbe3b5', '#e8456b', '#ffffff', '#f5b700', '#ffd3dc'];
 const petalCount = matchMedia('(max-width: 720px)').matches ? 16 : 28;
 const petalGeo = new THREE.BufferGeometry();
@@ -208,11 +227,27 @@ bgScene.add(petalMesh);
 const tmpObj = new THREE.Object3D();
 
 /* ------------------------------------------------------------------ */
-/* Cards                                                               */
+/* Scene: the designs, Saima and her name                              */
 /* ------------------------------------------------------------------ */
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(30, 1, 0.05, 500);
+
+// World units: the frame (the rect the scene is composed for) is 10 units tall at z = 0.
+const CAM_FOV = 30;
+const CAM_DIST = 5 / Math.tan(THREE.MathUtils.degToRad(CAM_FOV / 2));
+camera.position.set(0, 0, CAM_DIST);
+
+// Draw order of the see-through layers, back to front: her name, the designs behind her, her
+// shadow and Saima herself, then the designs in front of her.
+const ORDER = { name: 0, behind: 1, shadow: 2, saima: 3, front: 4 };
+
+const uvVertex = /* glsl */`
+  varying vec2 vUv;
+  void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+`;
+
+/* ---------- design cards ---------- */
 
 // a card's height is its width times its design's aspect (1 for square posts, 1.25 for 4:5)
 const aspectOf = (i) => (WORKS[i] && WORKS[i].aspect) || 1;
@@ -220,8 +255,8 @@ const aspectOf = (i) => (WORKS[i] && WORKS[i].aspect) || 1;
 const cardVertex = /* glsl */`
   uniform float uHover;
   uniform float uLift;
-  uniform float uBend;   // 1 = curved to sit on the ring, 0 = flat
-  uniform float uBendR;
+  uniform float uBend;   // 1 = curved to sit on a ring, 0 = flat
+  uniform float uBendR;  // ring radius in the card's own units; negative bends round the outside
   varying vec2 vUv;
   void main() {
     vUv = uv;
@@ -263,7 +298,6 @@ const cardFragment = /* glsl */`
 const blankTex = new THREE.DataTexture(new Uint8Array([200, 198, 194, 255]), 1, 1);
 blankTex.needsUpdate = true;
 const photoTex = Array(PHOTOS).fill(null);
-const cards = [];
 
 function makeCardMaterial(size) {
   return new THREE.ShaderMaterial({
@@ -276,7 +310,7 @@ function makeCardMaterial(size) {
       uHover: { value: 0 },
       uLift: { value: size.x * 0.08 },
       uBend: { value: 0 },
-      uBendR: { value: 10 },
+      uBendR: { value: -10 },
     },
     vertexShader: cardVertex,
     fragmentShader: cardFragment,
@@ -287,10 +321,6 @@ function makeCardMaterial(size) {
 
 // a soft shadow under each card once it lies flat (in the reel and the work wheel)
 const SHADOW_PAD = 1.5;
-const shadowVertex = /* glsl */`
-  varying vec2 vUv;
-  void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
-`;
 const shadowFragment = /* glsl */`
   uniform vec2 uSize;
   uniform float uRadius;
@@ -313,7 +343,7 @@ function makeShadow(w, h) {
     new THREE.PlaneGeometry(w * SHADOW_PAD, h * SHADOW_PAD),
     new THREE.ShaderMaterial({
       uniforms: { uSize: { value: new THREE.Vector2(w, h) }, uRadius: { value: w * 0.035 }, uAlpha: { value: 0 } },
-      vertexShader: shadowVertex,
+      vertexShader: uvVertex,
       fragmentShader: shadowFragment,
       transparent: true,
       depthWrite: false,
@@ -324,65 +354,177 @@ function makeShadow(w, h) {
   return mesh;
 }
 
-/* ---------- Arc (rainbow) ---------- */
-const ARC = { N: 30 };
-const arcGroup = new THREE.Group();
-const arcState = { t: 0, spin: 0, speed: 0, user: 0 };
-
-/* ---------- Ring (carousel you fly into): one card per design ---------- */
+// One card per design. They build a circle while the page loads, then orbit Saima, travel down the
+// page, settle on the work wheel and finish as a ring above the footer.
 const RING = { N: PHOTOS, R: 10 };
 RING.w = ((TAU * RING.R) / RING.N) * 0.86;
 RING.h = RING.w; // a square card's height; poses size cards by it
-const ringGroup = new THREE.Group();
-const ringState = { t: 0, spin: 0, speed: 0, user: 0, build: 0 };
+const ringState = { spin: 0, speed: 0, user: 0, orbit: 0 };
 
-const arcCards = [];
-const ringCards = [];
+const cards = [];
 {
   const geos = {};
-  for (let i = 0; i < ARC.N; i++) {
-    const asp = aspectOf(i % PHOTOS);
-    const geo = geos[asp] || (geos[asp] = new THREE.PlaneGeometry(1, asp));
-    const mat = makeCardMaterial(new THREE.Vector2(1, asp));
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.rotation.order = 'ZYX';
-    mesh.visible = false;
-    const rank = Math.min(i, ARC.N - i);
-    const card = { mesh, mat, photo: i % PHOTOS, theta: (i / ARC.N) * TAU, rank, side: i <= ARC.N / 2 ? 1 : -1, p: 0, hover: 0 };
-    mesh.userData.card = card;
-    arcCards.push(card);
-    arcGroup.add(mesh);
-  }
-  scene.add(arcGroup);
-}
-{
-  const geos = {};
-  const step = TAU / RING.N;
-  for (let i = 0; i < RING.N; i++) {
+  for (let i = 0; i < PHOTOS; i++) {
     const asp = aspectOf(i);
     const geo = geos[asp] || (geos[asp] = new THREE.PlaneGeometry(RING.w, RING.w * asp, 24, 1));
     const mat = makeCardMaterial(new THREE.Vector2(RING.w, RING.w * asp));
-    mat.uniforms.uOpacity.value = 0;
-    mat.uniforms.uBend.value = 1;
-    mat.uniforms.uBendR.value = RING.R;
+    // cards face out from the ring, so they curve away from the viewer round its outside
+    mat.uniforms.uBendR.value = -RING.R;
     const mesh = new THREE.Mesh(geo, mat);
     mesh.visible = false;
-    // build starts at the front-right and runs right -> back -> left -> front
-    const phi = (3 * Math.PI) / 4 - i * step;
     const shadow = makeShadow(RING.w, RING.w * asp);
     mesh.add(shadow);
-    const card = { mesh, mat, shadow, photo: i, aspect: asp, phi, order: i, p: 0, hover: 0 };
+    const card = {
+      mesh, mat, shadow,
+      photo: i,
+      order: i,
+      aspect: asp,
+      theta: (i / PHOTOS) * TAU, // its place round the circle and the orbit; 0 is the top / the front
+      rank: Math.min(i, PHOTOS - i), // the circle builds out from the top, both ways round
+      side: i <= PHOTOS / 2 ? 1 : -1,
+      p: 0,
+      hover: 0,
+      hi: false,
+    };
     mesh.userData.card = card;
-    ringCards.push(card);
-    ringGroup.add(mesh);
+    cards.push(card);
+    scene.add(mesh);
   }
-  scene.add(ringGroup);
 }
-cards.push(...arcCards, ...ringCards);
+
+/* ---------- Saima ---------- */
+
+const SAIMA_Z = 0;
+const saima = { rise: 0, sheen: -1, x: 0, y: -5, H: 9, op: 0 };
+const saimaGeo = new THREE.PlaneGeometry(FIG.aspect, 1);
+saimaGeo.translate(0, 0.5, 0); // origin at the middle of the bottom edge, where she is cropped
+const saimaMat = new THREE.ShaderMaterial({
+  uniforms: { uMap: { value: clearTex }, uOpacity: { value: 0 }, uSheen: { value: -1 } },
+  vertexShader: uvVertex,
+  fragmentShader: /* glsl */`
+    uniform sampler2D uMap;
+    uniform float uOpacity;
+    uniform float uSheen;
+    varying vec2 vUv;
+    void main() {
+      vec4 t = texture2D(uMap, vec2(vUv.x, 1.0 - vUv.y));
+      if (t.a < 0.004) discard;
+      // a touch of warmth so she sits in the sunlit meadow
+      vec3 c = t.rgb * vec3(1.03, 1.0, 0.97);
+      // a band of light passes over her as she arrives
+      float band = exp(-pow((vUv.x * 0.5 + vUv.y - uSheen) * 6.0, 2.0));
+      c = mix(c, vec3(1.0, 0.98, 0.94), band * 0.22);
+      gl_FragColor = vec4(c, t.a * uOpacity);
+    }
+  `,
+  transparent: true,
+  depthWrite: false,
+});
+const saimaMesh = new THREE.Mesh(saimaGeo, saimaMat);
+saimaMesh.renderOrder = ORDER.saima;
+saimaMesh.visible = false;
+scene.add(saimaMesh);
+
+// a soft shadow just behind her, from her own silhouette blurred through the texture's mipmaps
+const saimaShadowMat = new THREE.ShaderMaterial({
+  uniforms: { uMap: { value: clearTex }, uAlpha: { value: 0 } },
+  vertexShader: uvVertex,
+  fragmentShader: /* glsl */`
+    uniform sampler2D uMap;
+    uniform float uAlpha;
+    varying vec2 vUv;
+    void main() {
+      float a = texture2D(uMap, vec2(vUv.x, 1.0 - vUv.y), 3.5).a;
+      gl_FragColor = vec4(0.05, 0.09, 0.18, a * uAlpha);
+    }
+  `,
+  transparent: true,
+  depthWrite: false,
+});
+const saimaShadow = new THREE.Mesh(saimaGeo, saimaShadowMat);
+saimaShadow.renderOrder = ORDER.shadow;
+saimaShadow.visible = false;
+scene.add(saimaShadow);
+
+// her outline at low resolution, so a click on her (and not on the sky beside her) can be told apart
+const portraitMask = { data: null, w: 0, h: 0 };
+function buildPortraitMask(img) {
+  const w = 96, h = Math.round(96 / FIG.aspect);
+  const cv = document.createElement('canvas');
+  cv.width = w;
+  cv.height = h;
+  const ctx = cv.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0, w, h);
+  const px = ctx.getImageData(0, 0, w, h).data;
+  portraitMask.data = new Uint8Array(w * h);
+  for (let k = 0; k < w * h; k++) portraitMask.data[k] = px[k * 4 + 3];
+  portraitMask.w = w;
+  portraitMask.h = h;
+}
+function portraitAlpha(u, v) {
+  const { data, w, h } = portraitMask;
+  if (!data) return 0;
+  const x = clamp(Math.floor(u * w), 0, w - 1);
+  const y = clamp(Math.floor((1 - v) * h), 0, h - 1);
+  return data[y * w + x] / 255;
+}
+
+/* ---------- her name, behind her ---------- */
+
+// Each word is drawn into its own canvas at the size it is shown, and its letters rise in one by one.
+const nameAnim = { t: 0 };
+const NAME_COLOR = new THREE.Color('#fffaf2');
+const nameFragment = /* glsl */`
+  uniform sampler2D uMap;
+  uniform float uT;          // seconds since the letters started to rise
+  uniform float uEdges[9];   // where each letter starts, across the word (0..1)
+  uniform float uOpacity;
+  uniform vec3 uColor;
+  varying vec2 vUv;
+  void main() {
+    float letter = 0.0;
+    for (int i = 1; i < 9; i++) letter += step(uEdges[i], vUv.x);
+    float p = clamp((uT - letter * 0.075) / 0.95, 0.0, 1.0);
+    float e = 1.0 - pow(1.0 - p, 4.0);
+    // each letter slides up out of a slot at the bottom of the word
+    float sy = vUv.y + (1.0 - e);
+    if (sy > 1.0) discard;
+    float a = texture2D(uMap, vec2(vUv.x, sy)).a;
+    gl_FragColor = vec4(uColor, a * uOpacity * smoothstep(0.0, 0.25, p));
+  }
+`;
+const nameWords = [
+  { text: 'Saima', italic: false },
+  { text: 'Ahmed', italic: true },
+].map((w) => {
+  const cv = document.createElement('canvas');
+  const tex = new THREE.CanvasTexture(cv);
+  tex.generateMipmaps = false;
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  const mat = new THREE.ShaderMaterial({
+    uniforms: {
+      uMap: { value: tex },
+      uT: { value: 0 },
+      uEdges: { value: new Array(9).fill(2) },
+      uOpacity: { value: 0 },
+      uColor: { value: NAME_COLOR },
+    },
+    vertexShader: uvVertex,
+    fragmentShader: nameFragment,
+    transparent: true,
+    depthWrite: false,
+  });
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+  mesh.renderOrder = ORDER.name;
+  mesh.visible = false;
+  scene.add(mesh);
+  return { ...w, cv, tex, mat, mesh, ready: false, cx: 0, cy: 0, pw: 1, ph: 1 };
+});
 
 /* ---------- textures (decoded off the main thread when possible) ---------- */
 
-const TO_LOAD = PHOTOS + 1; // reels + backdrop
+const TO_LOAD = PHOTOS + 2; // designs, backdrop and portrait
 let loadedCount = 0;
 let allLoaded = false;
 const loadWaiters = [];
@@ -400,8 +542,8 @@ function prepTexture(tex) {
 function applyTexture(i, tex) {
   renderer.initTexture(prepTexture(tex));
   photoTex[i] = tex;
-  for (const c of cards) {
-    if (c.photo !== i || c.hi) continue;
+  const c = cards[i];
+  if (c && !c.hi) {
     c.mat.uniforms.uMap.value = tex;
     gsap.to(c.mat.uniforms.uLoaded, { value: 1, duration: 0.45, ease: 'power2.out' });
   }
@@ -413,11 +555,12 @@ function markLoaded() {
     loadWaiters.splice(0).forEach((fn) => fn());
   }
 }
-// Photo URLs, sized for this screen, and their early downloads come from the inline script in index.html.
+// Image URLs, sized for this screen, and their early downloads come from the inline script in index.html.
 const assets = window.__siteAssets || {
   cards: Array.from({ length: PHOTOS }, (_, i) => cardSrc(i)),
   bg: 'assets/img/bg/hills-2560.webp',
   bgWidth: 2560,
+  portrait: PORTRAIT_SRC,
   pre: {},
 };
 
@@ -427,10 +570,10 @@ function fetchBlob(url, fresh) {
 }
 
 // decoded off the main thread where the browser can
-async function decodeImage(url, fresh = false) {
+async function decodeImage(url, fresh = false, options = undefined) {
   const blob = await fetchBlob(url, fresh);
   if (typeof createImageBitmap === 'function') {
-    try { return await createImageBitmap(blob); } catch { /* decode through an <img> instead */ }
+    try { return await createImageBitmap(blob, options); } catch { /* decode through an <img> instead */ }
   }
   const img = new Image();
   img.src = URL.createObjectURL(blob);
@@ -439,7 +582,7 @@ async function decodeImage(url, fresh = false) {
   return img;
 }
 // an early download that failed gets one fresh try
-const loadImage = (url) => decodeImage(url).catch(() => decodeImage(url, true));
+const loadImage = (url, options) => decodeImage(url, false, options).catch(() => decodeImage(url, true, options));
 
 function applyBackdrop(tex) {
   tex.flipY = false;
@@ -451,6 +594,15 @@ function applyBackdrop(tex) {
   bg.tex = tex;
   bgMat.uniforms.uBg.value = tex;
   bgMat.uniforms.uImgAspect.value = tex.image.width / tex.image.height;
+}
+
+function applyPortrait(img) {
+  const tex = prepTexture(new THREE.Texture(img));
+  tex.anisotropy = 1;
+  renderer.initTexture(tex);
+  saimaMat.uniforms.uMap.value = tex;
+  saimaShadowMat.uniforms.uMap.value = tex;
+  buildPortraitMask(img);
 }
 
 let cardsLoaded = 0;
@@ -472,11 +624,16 @@ function loadTextures() {
     loadImage(url).then((img) => applyTexture(i, new THREE.Texture(img))).catch(() => {}).finally(cardDone);
   });
   loadImage(bgUrl).then((img) => applyBackdrop(new THREE.Texture(img))).catch(() => {}).finally(markLoaded);
+  // straight (not premultiplied) alpha, so her edges blend cleanly over the sky
+  loadImage(assets.portrait || PORTRAIT_SRC, { premultiplyAlpha: 'none' }).then(applyPortrait).catch(() => {}).finally(markLoaded);
 }
 
 // The design in focus on the work wheel, and its neighbours, swap to sharper textures so their type
-// stays crisp: the full-size file where the design is drawn large, the 768 px card elsewhere.
-const hiRes = new Map(); // design index -> { tex, dropped }
+// stays crisp: the full-size file where the design is drawn large, the 768 px card elsewhere. Their
+// upload waits for a quiet moment, so it never interrupts a scroll.
+const hiRes = new Map(); // design index -> { img, tex, dropped }
+const uploads = [];
+let lastUpload = 0;
 function focusSrc(i) {
   const px = work.Ha * ((view.h - panel.t) / 10) * view.dpr;
   return px > 800 ? fullSrc(i) : cardSrc(i);
@@ -485,36 +642,46 @@ function wantHiRes(i) {
   if (hiRes.has(i)) return;
   const url = focusSrc(i);
   if (url === assets.cards[i]) return; // the card texture is already sharp enough
-  const entry = { tex: null, dropped: false };
+  const entry = { img: null, tex: null, dropped: false };
   hiRes.set(i, entry);
   loadImage(url).then((img) => {
     if (entry.dropped) { if (img.close) img.close(); return; }
-    entry.tex = prepTexture(new THREE.Texture(img));
-    renderer.initTexture(entry.tex);
-    const c = ringCards[i];
-    if (c) { c.mat.uniforms.uMap.value = entry.tex; c.hi = true; }
+    entry.img = img;
+    uploads.push(i);
   }).catch(() => hiRes.delete(i));
+}
+function flushUploads(now) {
+  if (!uploads.length || now - lastUpload < 120 || Math.abs(scroll.vel) > 700) return;
+  const i = uploads.shift();
+  const entry = hiRes.get(i);
+  if (!entry || entry.dropped || !entry.img) return;
+  entry.tex = prepTexture(new THREE.Texture(entry.img));
+  renderer.initTexture(entry.tex);
+  lastUpload = now;
+  cards[i].mat.uniforms.uMap.value = entry.tex;
+  cards[i].hi = true;
 }
 function dropHiRes(i) {
   const entry = hiRes.get(i);
   if (!entry) return;
   entry.dropped = true;
   hiRes.delete(i);
-  const c = ringCards[i];
-  if (c) { c.mat.uniforms.uMap.value = photoTex[i] || blankTex; c.hi = false; }
-  if (entry.tex) {
-    entry.tex.dispose();
-    if (entry.tex.image && entry.tex.image.close) entry.tex.image.close();
-  }
+  const c = cards[i];
+  c.mat.uniforms.uMap.value = photoTex[i] || blankTex;
+  c.hi = false;
+  if (entry.tex) entry.tex.dispose();
+  if (entry.img && entry.img.close) entry.img.close();
 }
-function updateHiRes() {
-  const on = phase.ring && scroll.w > 0.35 && scroll.f < 0.5;
+function updateHiRes(now) {
+  const on = scroll.w > 0.35 && scroll.f < 0.5;
   const center = Math.round(scroll.act);
   for (const i of [...hiRes.keys()]) if (!on || Math.abs(i - center) > 1) dropHiRes(i);
-  if (!on) return;
-  wantHiRes(center);
-  if (center > 0) wantHiRes(center - 1);
-  if (center < PHOTOS - 1) wantHiRes(center + 1);
+  if (on) {
+    wantHiRes(center);
+    if (center > 0) wantHiRes(center - 1);
+    if (center < PHOTOS - 1) wantHiRes(center + 1);
+  }
+  flushUploads(now);
 }
 
 // full-size designs for the viewer, fetched one at a time in the background once the intro is done
@@ -537,69 +704,136 @@ function preloadFullPhotos() {
 /* Layout                                                              */
 /* ------------------------------------------------------------------ */
 
-// World units: the frame (the rect the scene is composed for) is 10 units tall at z = 0.
-const CAM_FOV = 30;
-const CAM_DIST = 5 / Math.tan(THREE.MathUtils.degToRad(CAM_FOV / 2));
+// the circle the designs build while loading
+const loader = { y: -0.4, R: 3, s: 0.4 };
+// the hero: Saima stands on the bottom edge, the ring orbits her hands and waist
+const hero = { wide: true, fa: 1.6, Hs: 9, x: 0, R: 6, tilt: 0.17, nameZ: -8.5, em: 2.5, note: new THREE.Vector3() };
+// the hand-written note under her name, a DOM element placed from hero.note
+const note = { el: $('.hero-note'), on: false, fits: true, x: -1, y: -1, op: -1 };
+// About on wide screens: she steps into the right half and the ring tightens round her
+const about = { x: 4, Hs: 8, R: 3.5 };
+const quality = { scale: 1, acc: 0, n: 0 };
+let fontsReady = false;
 
-const layout = { arcFrom: null, arcTo: null, ringFrom: null, ringTo: null };
+function layoutLoader(fa0) {
+  loader.R = Math.min(3, 10 * fa0 * 0.34);
+  loader.s = (((TAU * loader.R) / PHOTOS) * 1.04) / RING.w;
+}
 
-function arcLoaderPose(fa) {
+function layoutHero(fa) {
   const W = 10 * fa;
-  const land = smoothstep(fa, 0.9, 1.7);
-  const R = Math.min(5.5, 0.37 * W);
-  const spacing = (TAU * R) / ARC.N;
-  const cw = spacing * 1.14;
-  const yc = lerp(-0.7, -5, land);
-  return { R, cw, yc, tilt: 0, lean: 0, x: 0 };
-}
-function arcFinalPose(fa) {
-  // a crown of reels: the ring's centre sits below the panel, its top leans away
-  const land = smoothstep(fa, 0.7, 2.6);
-  const R = lerp(9, 20, land);
-  const spacing = (TAU * R) / ARC.N;
-  return {
-    R,
-    cw: spacing * lerp(0.92, 0.85, land),
-    yc: lerp(-8.4, -15, land),
-    tilt: lerp(0.4, 0.5, land),
-    lean: lerp(0.3, 0.32, land),
-    x: 0,
-  };
+  hero.fa = fa;
+  hero.wide = fa >= 1;
+  hero.Hs = hero.wide ? lerp(9.1, 8.6, smoothstep(fa, 1.3, 2.4)) : lerp(7.0, 8.2, smoothstep(fa, 0.45, 0.95));
+  const Ws = hero.Hs * FIG.aspect;
+  hero.x = 0;
+  // the side cards' inner edges must clear her shoulders: an edge sits at R * (1 - half a card)
+  const edge = 1 - (0.5 * RING.w) / RING.R;
+  const minR = (FIG.bodyHalf * Ws + 0.25) / edge;
+  hero.R = Math.max(minR, hero.wide ? Math.min(6.4, W * 0.36) : Math.min(3.3, W * 0.64));
+  hero.nameZ = -(hero.R + 2.5);
+  about.R = Math.max(2, W / 4 - 0.45);
+  about.Hs = Math.min(hero.Hs * 0.92, (about.R * edge - 0.25) / (FIG.bodyHalf * FIG.aspect));
+  about.x = W / 4 + 0.2;
 }
 
-function ringLoaderPose(fa) {
-  const R = RING.R;
-  const land = smoothstep(fa, 0.8, 1.8);
-  const fill = lerp(0.84, 0.46, land);
-  const halfH = Math.tan(THREE.MathUtils.degToRad(CAM_FOV / 2));
-  const dist = Math.max((2 * R) / (fill * 2 * halfH * fa), (1.45 * R) / (0.62 * 2 * halfH));
-  const el = THREE.MathUtils.degToRad(27);
-  return {
-    pos: new THREE.Vector3(0, Math.sin(el) * dist, Math.cos(el) * dist),
-    target: new THREE.Vector3(0, -R * 0.04, 0),
-    fov: CAM_FOV,
-    roll: THREE.MathUtils.degToRad(-5),
-  };
+// metrics of a word drawn at px size: ink box and letter starts, all in px
+function measureWord(word, px) {
+  const ctx = word.cv.getContext('2d');
+  ctx.font = `${word.italic ? 'italic ' : ''}400 ${px}px "Instrument Serif", "Times New Roman", serif`;
+  const m = ctx.measureText(word.text);
+  const left = m.actualBoundingBoxLeft || 0;
+  const right = m.actualBoundingBoxRight || m.width;
+  const asc = m.actualBoundingBoxAscent || px * 0.7;
+  const desc = m.actualBoundingBoxDescent || px * 0.2;
+  const starts = [];
+  for (let k = 0; k < word.text.length; k++) starts.push(ctx.measureText(word.text.slice(0, k)).width);
+  return { left, right, asc, desc, ink: left + right, starts };
 }
-function ringFinalPose(fa) {
-  const R = RING.R;
-  const land = smoothstep(fa, 0.7, 2.4);
-  // landscape: pulled back towards the near wall so the side reels loom large (a tunnel);
-  // portrait: from the centre, a few big reels curving away
-  const fov = lerp(80, 77, land);
-  return {
-    pos: new THREE.Vector3(0, 0, R * lerp(0.05, 0.3, land)),
-    target: new THREE.Vector3(0, 0, -R),
-    fov,
-    roll: 0,
-  };
+
+// sizes and draws the two words, and places them round her head
+function layoutName() {
+  if (!fontsReady) return;
+  const fh = Math.max(1, view.h - panel.t);
+  const upx = (fh / 10) * view.dpr; // texture px per world unit at z = 0
+  const W = 10 * hero.fa;
+  const Ws = hero.Hs * FIG.aspect;
+  const [w0, w1] = nameWords;
+  const m0 = measureWord(w0, 100), m1 = measureWord(w1, 100);
+  const headX = hero.x + (FIG.headX - 0.5) * Ws;
+  const headTop = -5 + hero.Hs * (1 - FIG.headTop);
+  const chin = -5 + hero.Hs * (1 - FIG.chin);
+  const asc = Math.max(m0.asc, m1.asc) / 100;
+  let em, place;
+  if (hero.wide) {
+    // one line, split round her head like a magazine masthead
+    const gap = FIG.headW * Ws + 0.8;
+    const leftRoom = headX - gap / 2 - (-W / 2 + 0.5);
+    const rightRoom = W / 2 - 0.5 - (headX + gap / 2);
+    em = Math.min(leftRoom / (m0.ink / 100), rightRoom / (m1.ink / 100), (4.7 - chin) / asc);
+    place = [{ x: headX - gap / 2, y: chin, align: 'right' }, { x: headX + gap / 2, y: chin, align: 'left' }];
+  } else {
+    // two lines above her, the second tucked just behind the top of her head
+    em = (Math.min((W - 0.8) / (m0.ink / 100), (W - 0.8) / (m1.ink / 100))) * 0.94;
+    const fit = (e) => headTop - 0.12 * e + 0.95 * e + asc * e;
+    if (fit(em) > 4.75) em *= (4.75 - headTop) / (fit(em) - headTop);
+    const base2 = headTop - 0.12 * em;
+    place = [{ x: -W / 2 + 0.4, y: base2 + 0.95 * em, align: 'left' }, { x: W / 2 - 0.4, y: base2, align: 'right' }];
+  }
+  hero.em = em;
+  const px = Math.max(8, Math.round(em * upx));
+  nameWords.forEach((word, k) => {
+    const m = measureWord(word, px);
+    const pad = Math.ceil(px * 0.08);
+    const cw = Math.ceil(m.ink + pad * 2), ch = Math.ceil(m.asc + m.desc + pad * 2);
+    word.cv.width = cw;
+    word.cv.height = ch;
+    const ctx = word.cv.getContext('2d');
+    ctx.font = `${word.italic ? 'italic ' : ''}400 ${px}px "Instrument Serif", "Times New Roman", serif`;
+    ctx.fillStyle = '#fff';
+    ctx.textBaseline = 'alphabetic';
+    const ox = pad + m.left, oy = pad + m.asc;
+    ctx.fillText(word.text, ox, oy);
+    const edges = new Array(9).fill(2);
+    m.starts.forEach((s, n) => { edges[n] = (ox + s) / cw; });
+    word.mat.uniforms.uEdges.value = edges;
+    word.tex.dispose();
+    word.tex.image = word.cv;
+    word.tex.needsUpdate = true;
+    // place by the ink box and the baseline, in world units as seen at z = 0
+    word.pw = cw / upx;
+    word.ph = ch / upx;
+    const p = place[k];
+    const left = p.align === 'right' ? p.x - (pad + m.ink) / upx : p.x - pad / upx;
+    word.cx = left + word.pw / 2;
+    word.cy = p.y - (ch - oy) / upx + word.ph / 2;
+    word.ready = true;
+  });
+  // the hand-written note hangs just under the end of "Ahmed", clear of her face:
+  // where one line would reach over it, it breaks onto two, and if even that won't fit it stays hidden
+  const last = nameWords[1];
+  const noteR = last.cx + last.pw / 2 - Math.ceil(px * 0.08) / upx;
+  hero.note.set(noteR, place[1].y - 0.16 * em, 0);
+  if (note.el) {
+    const unitPx = fh / 10; // css px per world unit at z = 0
+    const clear = (headX + (FIG.headW / 2) * Ws + 0.08) * unitPx;
+    const hn = note.el.querySelector('.hn');
+    note.el.classList.remove('is-stacked');
+    note.fits = noteR * unitPx - hn.offsetWidth > clear;
+    if (!note.fits) {
+      note.el.classList.add('is-stacked');
+      note.fits = noteR * unitPx - hn.offsetWidth > clear;
+    }
+  }
+  renderer.initTexture(w0.tex);
+  renderer.initTexture(w1.tex);
 }
 
 function measure() {
   view.w = Math.max(1, canvas.clientWidth);
   view.h = Math.max(1, canvas.clientHeight);
-  // phones get their full pixel density so the photos stay sharp; big screens cap at 2x
-  view.dpr = Math.min(window.devicePixelRatio || 1, view.w * view.h < 600000 ? 3 : 2);
+  // big screens and dense phones both cap at 2x; slower devices step down from there
+  view.dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 2) * quality.scale);
   // resizing the drawing buffer clears it, so only do it when the size really changed
   const size = renderer.getSize(new THREE.Vector2());
   if (renderer.getPixelRatio() !== view.dpr || size.x !== view.w || size.y !== view.h) {
@@ -612,12 +846,9 @@ function measure() {
   panel.t = $('.nav').offsetHeight;
 
   const fa = (view.w - panel.l - panel.r) / Math.max(1, view.h - panel.t - panel.b);
-  const fa0 = view.w / view.h;
-  layout.arcFrom = arcLoaderPose(fa0);
-  layout.arcTo = arcFinalPose(fa);
-  layout.ringFrom = ringLoaderPose(fa0);
-  layout.ringTo = ringFinalPose(fa);
-  measureStrip();
+  layoutLoader(view.w / view.h);
+  layoutHero(fa);
+  measureStrip(fa);
 
   bgCam.right = view.w;
   bgCam.top = view.h;
@@ -632,7 +863,11 @@ function resize() {
   applyInset();
   measureScroll();
   clearTimeout(decorTimer);
-  decorTimer = setTimeout(() => { drawDoodles(); buildMarquee(); }, 120);
+  decorTimer = setTimeout(() => {
+    layoutName();
+    drawDoodles();
+    buildMarquee();
+  }, 120);
 }
 
 function applyInset() {
@@ -645,57 +880,12 @@ function applyInset() {
 }
 
 /* ------------------------------------------------------------------ */
-/* Per-frame scene update                                              */
+/* Scroll: hero -> about -> work -> footer                             */
 /* ------------------------------------------------------------------ */
 
-const pointer = { x: 0, y: 0, sx: 0, sy: 0, px: -1, py: -1, inside: false };
-const lookTarget = new THREE.Vector3();
-const vA = new THREE.Vector3();
-const vB = new THREE.Vector3();
-
-function lerpPose(a, b, t) {
-  const out = {};
-  for (const k in a) out[k] = lerp(a[k], b[k], t);
-  return out;
-}
-
-const easeInOut3 = gsap.parseEase('power3.inOut');
-const easeInOut2 = gsap.parseEase('power2.inOut');
-
-function updateArc(dt) {
-  const t = easeInOut3(arcState.t);
-  const pose = lerpPose(layout.arcFrom, layout.arcTo, t);
-
-  arcState.spin += (arcState.speed + arcState.user) * dt;
-  arcState.user *= Math.exp(-dt * 2.2);
-
-  const live = fx.inset;
-  camera.fov = CAM_FOV;
-  camera.position.set(0, 0, CAM_DIST);
-  camera.up.set(0, 1, 0);
-  camera.lookAt(0, 0, 0);
-
-  arcGroup.position.set(pose.x + pointer.sx * 0.25 * live, pose.yc, 0);
-  arcGroup.rotation.set(-pose.tilt + pointer.sy * 0.035 * live, pointer.sx * 0.06 * live, 0);
-
-  for (const c of arcCards) {
-    const p = c.p;
-    c.mesh.visible = p > 0.001;
-    if (!c.mesh.visible) continue;
-    const th = c.theta + arcState.spin;
-    const r = pose.R * p;
-    c.mesh.position.set(r * Math.sin(th), r * Math.cos(th), c.rank * 0.012 * (1 - t));
-    // flies out edge-on along its radius, then opens up to face the viewer
-    c.mesh.rotation.set(pose.lean, (1 - p) * Math.PI * 0.5 * c.side, -th);
-    const s = pose.cw * (0.3 + 0.7 * p);
-    c.mesh.scale.set(s, s, s);
-  }
-}
-
-/* ---------- scroll: hero -> about -> work -> footer ---------- */
-
-// a: hero -> about, the ring unrolls into a reel that travels with the page
-// w: about -> work, the reel turns into a wheel that brings one design forward at a time (act)
+// a: hero -> about; on wide screens Saima steps aside with the ring, on tall ones the ring
+//    unrolls into a reel that travels with the page
+// w: about -> work, the cards turn into a wheel that brings one design forward at a time (act)
 // f: work -> footer, the cards roll back up into a ring above the footer
 const scroll = { y: 0, raw: 0, vh: 1, footTop: 1, a: 0, w: 0, f: 0, act: 0, dim: 0, offset: 0, tint: 0, vel: 0 };
 const work = { top: 0, step: 1, vertical: true, x: 3, y: 0, Ha: 6 };
@@ -721,6 +911,7 @@ const tint = new THREE.Color();
 const strip = { vertical: true, h: 3.3, w: 1.9, pitch: 3.85, L: 77, xc: 3, yc: 0, perVh: 5.5 };
 const nav = $('.nav');
 const textBlocks = $$('.about .block-in, .site-foot .foot-in');
+const textRects = []; // the copy blocks' boxes in page coordinates, so no layout is read per frame
 
 function measureScroll() {
   scroll.vh = window.innerHeight;
@@ -739,16 +930,30 @@ function measureScroll() {
     const fa = view.w / fh;
     Object.assign(footRing, fitFootRing(T, B, Math.min(5 * fa * (fa >= 1 ? 0.6 : 0.74), 4.3)));
   }
+  const sy = window.scrollY;
+  textRects.length = 0;
+  for (const el of textBlocks) {
+    const r = el.getBoundingClientRect();
+    textRects.push({ top: r.top + sy, bottom: r.bottom + sy, left: r.left, right: r.right });
+  }
+}
+
+// smooth wheel scrolling on desktop; touch keeps the browser's own momentum
+const lenis = window.Lenis && finePointer && !reduceMotion ? new window.Lenis({ lerp: 0.09, smoothWheel: true }) : null;
+if (lenis) lenis.stop();
+const easeScroll = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+function scrollToY(y, duration = 1.2) {
+  if (lenis) lenis.scrollTo(y, { duration, easing: easeScroll });
+  else window.scrollTo({ top: y, behavior: reduceMotion ? 'auto' : 'smooth' });
 }
 
 // scroll the page so design i sits in focus on the wheel
 function goToWork(i) {
-  window.scrollTo({ top: work.top + i * work.step, behavior: reduceMotion ? 'auto' : 'smooth' });
+  scrollToY(work.top + i * work.step, 1.1);
 }
 
 // the reel is a column beside the copy on wide screens, a band across tall ones
-function measureStrip() {
-  const fa = (view.w - panel.l - panel.r) / Math.max(1, view.h - panel.t - panel.b);
+function measureStrip(fa) {
   strip.vertical = fa >= 1;
   if (strip.vertical) {
     strip.h = 3.2; // a square card's size; 4:5 cards stand a quarter taller
@@ -792,10 +997,9 @@ function textOverlap() {
     y1 = cy - (strip.yc - strip.h * 0.5) * u;
   }
   let cover = 0;
-  for (const el of textBlocks) {
-    const r = el.getBoundingClientRect();
+  for (const r of textRects) {
     if (r.right < x0 || r.left > x1) continue;
-    const iy = Math.min(y1, r.bottom) - Math.max(y0, r.top);
+    const iy = Math.min(y1, r.bottom - scroll.raw) - Math.max(y0, r.top - scroll.raw);
     if (iy > 0) cover = Math.max(cover, iy / (y1 - y0));
   }
   return clamp(cover * 2.5, 0, 1);
@@ -812,8 +1016,13 @@ function updateScroll(dt) {
   scroll.vel += ((dt > 0 ? dy / dt : 0) - scroll.vel) * (1 - Math.exp(-dt * 6));
   scroll.raw = raw;
 
-  scroll.y += (raw - scroll.y) * (1 - Math.exp(-dt * 8));
-  if (Math.abs(raw - scroll.y) < 0.05) scroll.y = raw;
+  // the page itself scrolls smoothly (Lenis on wheels, momentum on touch), so the scene follows it
+  // exactly; a plain wheel without Lenis gets a little smoothing of its own
+  if (lenis || !finePointer) scroll.y = raw;
+  else {
+    scroll.y += (raw - scroll.y) * (1 - Math.exp(-dt * 14));
+    if (Math.abs(raw - scroll.y) < 0.05) scroll.y = raw;
+  }
   const { y, vh } = scroll;
   const footStart = scroll.footTop - vh; // the footer's top edge reaches the bottom of the screen
   const workStart = work.top - vh * 0.78;
@@ -825,7 +1034,7 @@ function updateScroll(dt) {
   scroll.offset = (clamp(y, vh * 0.9, Math.max(vh * 0.9, workStart)) - vh * 0.9) / vh * strip.perVh;
   // the hills sink as the page rises, leaving open sky behind the copy
   fx.shift = lerp(0.55 * (1 - Math.pow(1 - scroll.a, 3)), 0.62, easeInOut2(scroll.f));
-  const cover = scroll.a * (1 - scroll.w) * (1 - scroll.f) > 0.01 ? textOverlap() : 0;
+  const cover = !hero.wide && scroll.a * (1 - scroll.w) * (1 - scroll.f) > 0.01 ? textOverlap() : 0;
   scroll.dim += (cover - scroll.dim) * (1 - Math.exp(-dt * 6));
 
   // the page takes on the colour of the design in focus, and its text turns light on dark ones
@@ -836,6 +1045,13 @@ function updateScroll(dt) {
   if (light !== document.body.classList.contains('ink-light')) document.body.classList.toggle('ink-light', light);
 }
 
+/* ------------------------------------------------------------------ */
+/* Poses                                                               */
+/* ------------------------------------------------------------------ */
+
+const easeInOut3 = gsap.parseEase('power3.inOut');
+const easeInOut2 = gsap.parseEase('power2.inOut');
+
 const p1 = new THREE.Vector3();
 const p2 = new THREE.Vector3();
 const p3 = new THREE.Vector3();
@@ -844,10 +1060,28 @@ const q2 = new THREE.Quaternion();
 const q3 = new THREE.Quaternion();
 const qy = new THREE.Quaternion();
 const eul = new THREE.Euler();
+const eulZYX = new THREE.Euler(0, 0, 0, 'ZYX');
 const AXIS_X = new THREE.Vector3(1, 0, 0);
 const AXIS_Y = new THREE.Vector3(0, 1, 0);
-const REEL_CAM = new THREE.Vector3(0, 0, CAM_DIST);
-const reelLook = new THREE.Vector3();
+const ringCenter = new THREE.Vector3();
+const footCenter = new THREE.Vector3();
+const camLook = new THREE.Vector3();
+const projected = new THREE.Vector3();
+
+// a card on the loading circle; it flies out of the centre edge-on, then opens up, its top outwards
+function loaderPose(c, pos, quat) {
+  const r = loader.R * c.p;
+  pos.set(r * Math.sin(c.theta), loader.y + r * Math.cos(c.theta), 0);
+  quat.setFromEuler(eulZYX.set(0, (1 - c.p) * Math.PI * 0.5 * c.side, -c.theta));
+  return loader.s * (0.3 + 0.7 * c.p);
+}
+
+// a card on a ring round `center`, tilted back by `tilt`, facing out; ph = 0 is the front
+function orbitPose(ph, center, R, tilt, pos, quat) {
+  pos.set(R * Math.sin(ph), 0, R * Math.cos(ph)).applyAxisAngle(AXIS_X, tilt).add(center);
+  quat.setFromAxisAngle(AXIS_X, tilt).multiply(qy.setFromAxisAngle(AXIS_Y, ph));
+  return R / RING.R;
+}
 
 // a card's place in the reel; returns its scale
 function stripPose(c, pos, quat) {
@@ -866,13 +1100,9 @@ function stripPose(c, pos, quat) {
   return strip.h / RING.h;
 }
 
-// a card's place in the smaller, tilted ring above the footer; returns its scale
+// a card's place in the tilted ring above the footer; returns its scale
 function footPose(ph, pos, quat) {
-  const { R, yc } = footRing;
-  pos.set(R * Math.sin(ph), 0, -R * Math.cos(ph)).applyAxisAngle(AXIS_X, FOOT_TILT);
-  pos.y += yc;
-  quat.setFromAxisAngle(AXIS_X, FOOT_TILT).multiply(qy.setFromAxisAngle(AXIS_Y, -ph));
-  return R / RING.R;
+  return orbitPose(ph, footCenter.set(0, footRing.yc, 0), footRing.R, FOOT_TILT, pos, quat);
 }
 
 // a card's place on the work wheel; the design in focus comes forward at full size; returns its scale
@@ -896,60 +1126,70 @@ function workPose(c, pos, quat) {
   return s;
 }
 
-function updateRing(dt) {
-  const tt = ringState.t;
-  const a = layout.ringFrom, b = layout.ringTo;
-  // dive: rush inward early, drop down late so the lens clears the rim of cards
-  const tz = easeInOut3(tt);
-  const ty = easeInOut3(clamp(tt * 1.08, 0, 1));
-  const tl = easeInOut3(clamp(tt * 1.2 - 0.08, 0, 1));
-  const tf = easeInOut3(tt);
+/* ------------------------------------------------------------------ */
+/* Per-frame scene update                                              */
+/* ------------------------------------------------------------------ */
 
-  vA.set(lerp(a.pos.x, b.pos.x, tz), lerp(a.pos.y, b.pos.y, ty), lerp(a.pos.z, b.pos.z, tz));
-  lookTarget.set(lerp(a.target.x, b.target.x, tl), lerp(a.target.y, b.target.y, tl), lerp(a.target.z, b.target.z, tl));
+const pointer = { x: 0, y: 0, sx: 0, sy: 0, px: -1, py: -1, inside: false };
+let clock = 0;
 
-  const live = fx.inset;
-  lookTarget.x += pointer.sx * 0.9 * live;
-  lookTarget.y += pointer.sy * 0.5 * live;
-
-  // scrolling pulls the camera back out of the ring to where it watches the reel
-  const ca = easeInOut2(clamp((scroll.a - 0.06) / 0.8, 0, 1));
-  reelLook.set(pointer.sx * 0.35, -pointer.sy * 0.25, 0);
-  camera.position.copy(vA).lerp(REEL_CAM, ca);
-  lookTarget.lerp(reelLook, ca);
-  camera.fov = lerp(lerp(a.fov, b.fov, tf), CAM_FOV, ca);
-  camera.up.set(0, 1, 0);
-  camera.lookAt(lookTarget);
-  camera.rotateZ(lerp(a.roll, b.roll, tf) * (1 - ca));
-
+function updateScene(dt) {
   ringState.spin += (ringState.speed + ringState.user) * dt;
   ringState.user *= Math.exp(-dt * 2.2);
+  // scrolling turns the ring too, so it keeps moving while the page does
+  const spin = ringState.spin + (scroll.y / scroll.vh) * 1.1;
+  const wide = hero.wide;
+  const ea = easeInOut2(scroll.a);
 
-  const R = RING.R;
-  const sa = scroll.a, sw = scroll.w, sf = scroll.f;
-  for (const c of ringCards) {
-    const p = c.p;
-    c.mesh.visible = p > 0.001;
-    if (!c.mesh.visible) continue;
-    // its place on the hero ring; the build hinges each card open from the previous one
-    const ph = c.phi - ringState.spin;
-    p1.set(R * Math.sin(ph), 0, -R * Math.cos(ph));
-    q1.setFromEuler(eul.set(0, -ph - (1 - p) * 1.7, 0));
-    let s = 0.72 + 0.28 * p;
-    let bend = 1;
-    let opacity = clamp(p * 1.6, 0, 1);
-    // cards behind the camera leave the ring first so none sweeps through the lens;
-    // they return in reel order, one after another
-    const ai = easeInOut2(clamp((sa - 0.35 * (1 + Math.cos(ph)) * 0.5) / 0.65, 0, 1));
+  // Saima: rises in, steps into the right half for About on wide screens (or sinks away on tall
+  // ones), and sinks away as the work arrives
+  const H = wide ? lerp(hero.Hs, about.Hs, ea) : hero.Hs;
+  const x = wide ? lerp(hero.x, about.x, ea) : hero.x;
+  // on tall screens she clears out quickly, before the About copy reaches her
+  const leave = Math.min(1, easeInOut2(clamp(scroll.w * 1.3, 0, 1)) + (wide ? 0 : easeInOut2(clamp(scroll.a * 1.7, 0, 1))));
+  const y = -5 - (1 - saima.rise) * H * 0.6 - leave * H * 1.08;
+  const op = smoothstep(saima.rise, 0, 0.25) * (1 - scroll.f);
+  const shown = op > 0.004 && y + H > -5.05;
+  // the ring stays round her waist even while she rises in
+  ringCenter.set(x, -5 + H * 0.4, 0);
+  const R = wide ? lerp(hero.R, about.R, ea) : hero.R;
+
+  for (const c of cards) {
+    if (c.p <= 0.001) { c.mesh.visible = false; continue; }
+    const ph = c.theta + spin;
+    // the loading circle tips back into the orbit, each card a moment after the one before
+    const oi = easeInOut3(clamp(ringState.orbit * 1.4 - 0.4 * (c.order / PHOTOS), 0, 1));
+    let s, bend;
+    let opacity = clamp(c.p * 1.6, 0, 1);
+    if (oi < 1) {
+      s = loaderPose(c, p1, q1);
+      bend = 0;
+      if (oi > 0) {
+        const os = orbitPose(ph, ringCenter, R, hero.tilt, p2, q2);
+        p1.lerp(p2, oi);
+        q1.slerp(q2, oi);
+        s = lerp(s, os, oi);
+        bend = oi;
+      }
+    } else {
+      s = orbitPose(ph, ringCenter, R, hero.tilt, p1, q1);
+      bend = 1;
+    }
+    p1.y += Math.sin(clock * 1.2 + c.order * 1.3) * 0.05 * oi; // a gentle bob while orbiting
+
+    // tall screens: About unrolls the orbit into a reel; the back of the ring leaves first
+    const ai = wide ? 0 : easeInOut2(clamp((scroll.a - 0.35 * (1 + Math.cos(ph)) * 0.5) / 0.65, 0, 1));
     // the cards nearest the first design reach the wheel first
-    const wi = easeInOut2(clamp((sw - 0.3 * Math.min(1, Math.abs(c.order - scroll.act) / 6)) / 0.7, 0, 1));
-    const fi = easeInOut2(clamp((sf - 0.3 * (c.order / RING.N)) / 0.7, 0, 1));
+    const wi = easeInOut2(clamp((scroll.w - 0.3 * Math.min(1, Math.abs(c.order - scroll.act) / 6)) / 0.7, 0, 1));
+    const fi = easeInOut2(clamp((scroll.f - 0.3 * (c.order / RING.N)) / 0.7, 0, 1));
     if (ai > 0 || wi > 0 || fi > 0) {
-      const ss = stripPose(c, p2, q2);
-      p1.lerp(p2, ai);
-      q1.slerp(q2, ai);
-      s = lerp(s, ss, ai);
-      bend = 1 - ai;
+      if (ai > 0) {
+        const ss = stripPose(c, p2, q2);
+        p1.lerp(p2, ai);
+        q1.slerp(q2, ai);
+        s = lerp(s, ss, ai);
+        bend *= 1 - ai;
+      }
       if (wi > 0) {
         const ws = workPose(c, p3, q3);
         p1.lerp(p3, wi);
@@ -973,22 +1213,80 @@ function updateRing(dt) {
       c.mesh.visible = false;
       continue;
     }
+    c.mesh.visible = true;
     c.mesh.position.copy(p1);
     c.mesh.quaternion.copy(q1);
     c.mesh.scale.setScalar(s);
+    // behind her or in front of her
+    c.mesh.renderOrder = shown && p1.z < SAIMA_Z ? ORDER.behind : ORDER.front;
     c.mat.uniforms.uBend.value = bend;
     c.mat.uniforms.uOpacity.value = opacity;
     c.shadow.material.uniforms.uAlpha.value = 0.34 * opacity * (1 - bend);
   }
+
+  // Saima breathes a little and sways with the breeze
+  saimaMesh.visible = saimaShadow.visible = shown;
+  if (shown) {
+    const breathe = 1 + 0.004 * Math.sin(clock * 1.5);
+    const sway = Math.sin(clock * 0.6) * 0.02;
+    saima.x = x + sway;
+    saima.y = y;
+    saima.H = H;
+    saimaMesh.position.set(saima.x, y, SAIMA_Z);
+    saimaMesh.scale.set(H * breathe, H * breathe, 1);
+    saimaMat.uniforms.uOpacity.value = op;
+    saimaMat.uniforms.uSheen.value = saima.sheen;
+    saimaShadow.position.set(saima.x + H * 0.025, y - H * 0.004, SAIMA_Z - 0.35);
+    saimaShadow.scale.set(H * 1.01, H * 1.01, 1);
+    saimaShadowMat.uniforms.uAlpha.value = op * 0.2;
+  }
+
+  // her name rides up with the page, a little slower than the copy, and fades as About arrives
+  const nameOp = 1 - smoothstep(scroll.a, 0.2, 0.7);
+  const lift = (scroll.y / (Math.max(1, view.h - panel.t) / 10)) * 0.85;
+  const k = (CAM_DIST - hero.nameZ) / CAM_DIST; // further back, so drawn larger to look the same size
+  for (const word of nameWords) {
+    word.mesh.visible = word.ready && nameOp > 0.004 && nameAnim.t > 0;
+    if (!word.mesh.visible) continue;
+    word.mesh.position.set(word.cx * k, (word.cy + lift) * k, hero.nameZ);
+    word.mesh.scale.set(word.pw * k, word.ph * k, 1);
+    word.mat.uniforms.uT.value = nameAnim.t;
+    word.mat.uniforms.uOpacity.value = nameOp;
+  }
+  updateNote(nameOp, lift, k);
+}
+
+// the hand-written note follows the end of her name
+function updateNote(nameOp, lift, k) {
+  if (!note.el) return;
+  const op = note.on && note.fits ? nameOp : 0;
+  if (op > 0.004) {
+    projected.set(hero.note.x * k, (hero.note.y + lift) * k, hero.nameZ).project(camera);
+    const x = Math.round(((projected.x + 1) / 2) * view.w);
+    const y = Math.round(((1 - projected.y) / 2) * view.h);
+    if (x !== note.x || y !== note.y) {
+      note.x = x;
+      note.y = y;
+      note.el.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+    }
+  }
+  if (Math.abs(op - note.op) > 0.004) {
+    note.op = op;
+    note.el.style.opacity = op.toFixed(3);
+  }
 }
 
 function updateCamera() {
+  // a small parallax with the pointer: Saima holds still while the ring and her name shift round her
+  const live = fx.inset;
+  camera.position.set(pointer.sx * 0.55 * live, -pointer.sy * 0.3 * live, CAM_DIST);
+  camLook.set(pointer.sx * 0.12 * live, -pointer.sy * 0.06 * live, 0);
+  camera.lookAt(camLook);
   camera.aspect = frame.w / frame.h;
   camera.setViewOffset(frame.w, frame.h, -frame.x, -frame.y, view.w, view.h);
   camera.updateProjectionMatrix();
 }
 
-let clock = 0;
 function updatePetals(dt) {
   petalMat.uniforms.uAlpha.value = clamp(fx.reveal * 1.4 - 0.4, 0, 1);
   if (petalMat.uniforms.uAlpha.value <= 0) return;
@@ -1010,6 +1308,21 @@ function updatePetals(dt) {
   petalMesh.instanceMatrix.needsUpdate = true;
 }
 
+// slower devices step their pixel density down until the frame rate holds
+function adaptQuality(dt) {
+  if (!live || paused || document.hidden || dt <= 0 || dt >= 0.1) return;
+  quality.acc += dt;
+  quality.n++;
+  if (quality.n < 120) return;
+  const avg = quality.acc / quality.n;
+  quality.acc = 0;
+  quality.n = 0;
+  if (avg > 1 / 48 && Math.min(window.devicePixelRatio || 1, 2) * quality.scale > 1.01) {
+    quality.scale = Math.max(0.5, quality.scale - 0.15);
+    resize();
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* Counter (odometer)                                                  */
 /* ------------------------------------------------------------------ */
@@ -1019,13 +1332,13 @@ const counter = { value: 1, cols: [] };
   const spans = $$('.counter-digits .col');
   const sizes = [2, 11, 101]; // hundreds 0-1, tens 0-10, ones 0-100 (cumulative, always rolls forward)
   spans.forEach((col, i) => {
-    const strip = document.createElement('span');
-    strip.className = 'strip';
+    const s = document.createElement('span');
+    s.className = 'strip';
     let html = '';
     for (let k = 0; k < sizes[i]; k++) html += `<span>${k % 10}</span>`;
-    strip.innerHTML = html;
-    col.appendChild(strip);
-    counter.cols.push({ strip, pos: 0 });
+    s.innerHTML = html;
+    col.appendChild(s);
+    counter.cols.push({ strip: s, pos: 0 });
   });
 })();
 function updateCounter(dt) {
@@ -1048,26 +1361,33 @@ function updateCounter(dt) {
 
 const raycaster = new THREE.Raycaster();
 const ndc = new THREE.Vector2();
+const SAIMA = { saima: true };
 let live = false;
 let hovered = null;
 let drag = null;
 let paused = false;
 
+// the design (or Saima) under a point on the screen
 function pick(clientX, clientY) {
   // reels faded back behind the copy can't be picked through it
   if (scroll.dim * scroll.a * (1 - scroll.w) * (1 - scroll.f) > 0.5) return null;
   if (clientX < frame.x || clientX > frame.x + frame.w || clientY < frame.y || clientY > frame.y + frame.h) return null;
-  const rect = canvas.getBoundingClientRect();
-  ndc.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+  ndc.set((clientX / view.w) * 2 - 1, -(clientY / view.h) * 2 + 1);
   raycaster.setFromCamera(ndc, camera);
-  const hits = raycaster.intersectObjects(cards.filter((c) => c.mesh.visible && c.mat.uniforms.uOpacity.value > 0.25).map((c) => c.mesh), false);
-  return hits.length ? hits[0].object.userData.card : null;
+  const targets = cards.filter((c) => c.mesh.visible && c.mat.uniforms.uOpacity.value > 0.25).map((c) => c.mesh);
+  if (saimaMesh.visible && saimaMat.uniforms.uOpacity.value > 0.5) targets.push(saimaMesh);
+  for (const hit of raycaster.intersectObjects(targets, false)) {
+    if (hit.object !== saimaMesh) return hit.object.userData.card;
+    if (hit.uv && portraitAlpha(hit.uv.x, hit.uv.y) > 0.4) return SAIMA;
+  }
+  return null;
 }
 
 function spinBy(pixels) {
-  const k = pixels / Math.max(320, frame.w * 0.55);
-  if (!phase.ring) arcState.spin += k;
-  else if (scroll.a < 0.98 || scroll.f > 0.02) ringState.spin -= k * 0.8; // the reel itself follows the scroll
+  // the wheel and the reel follow the scroll, so only the rings can be turned by hand
+  if (scroll.w > 0.02 && scroll.f < 0.98) return;
+  if (!hero.wide && scroll.a > 0.02 && scroll.f < 0.98) return;
+  ringState.spin += (pixels / Math.max(320, frame.w * 0.55)) * 0.8;
 }
 
 canvas.addEventListener('pointermove', (e) => {
@@ -1092,7 +1412,7 @@ canvas.addEventListener('pointerdown', (e) => {
   if (!live) return;
   canvas.setPointerCapture(e.pointerId);
   drag = { x: e.clientX, y0: e.clientY, t: performance.now(), moved: 0, vel: 0, start: performance.now() };
-  if (phase.ring) ringState.user = 0; else arcState.user = 0;
+  ringState.user = 0;
   document.body.classList.add('is-dragging');
 });
 function endDrag(e) {
@@ -1101,14 +1421,14 @@ function endDrag(e) {
   drag = null;
   document.body.classList.remove('is-dragging');
   if (d.moved < 6 && performance.now() - d.start < 500) {
-    const card = pick(e.clientX, e.clientY);
-    if (!card) return;
-    if (phase.ring && scroll.w > 0.9 && scroll.f < 0.1 && card.order !== Math.round(scroll.act)) goToWork(card.order);
-    else openLightbox(card.photo);
+    const target = pick(e.clientX, e.clientY);
+    if (!target) return;
+    if (target === SAIMA) scrollToY($('#about').offsetTop, 1.3);
+    else if (scroll.w > 0.9 && scroll.f < 0.1 && target.order !== Math.round(scroll.act)) goToWork(target.order);
+    else openLightbox(target.photo);
     return;
   }
-  const v = clamp(d.vel, -4, 4);
-  if (phase.ring) ringState.user = -v * 0.8; else arcState.user = v;
+  if (scroll.w < 0.02 || scroll.f > 0.98) ringState.user = clamp(d.vel, -4, 4) * 0.8;
 }
 canvas.addEventListener('pointerup', endDrag);
 // the browser took the gesture over for scrolling: not a tap, not a throw
@@ -1123,6 +1443,7 @@ function updateHover(dt) {
   if (target !== hovered) {
     hovered = target;
     document.body.classList.toggle('is-hover', !!hovered);
+    if (hovered) setTag(hovered === SAIMA);
   }
   const k = 1 - Math.exp(-dt * 10);
   for (const c of cards) {
@@ -1154,7 +1475,7 @@ function showPhoto(i, dir = 0) {
   lb.count.textContent = `${pad2(lb.index + 1)} / ${pad2(PHOTOS)}`;
   const w = WORKS[lb.index];
   lb.title.textContent = w.title;
-  lb.meta.textContent = [w.client, w.type].filter(Boolean).join(' \u00b7 ');
+  lb.meta.textContent = [w.client, w.type].filter(Boolean).join(' · ');
   const src = fullSrc(lb.index);
   const pre = new Image();
   pre.src = src;
@@ -1173,6 +1494,7 @@ function openLightbox(i, viaKeyboard = false) {
   lb.open = true;
   lb.returnFocus = document.activeElement;
   document.documentElement.classList.add('is-locked');
+  if (lenis) lenis.stop();
   lb.el.hidden = false;
   lb.img.style.opacity = '0';
   gsap.to(lb.el, { opacity: 1, duration: 0.4, ease: 'power2.out', onComplete: () => { paused = true; } });
@@ -1183,7 +1505,10 @@ function closeLightbox() {
   if (!lb.open) return;
   lb.open = false;
   paused = false;
-  if (live) document.documentElement.classList.remove('is-locked');
+  if (live) {
+    document.documentElement.classList.remove('is-locked');
+    if (lenis) lenis.start();
+  }
   gsap.to(lb.el, {
     opacity: 0, duration: 0.35, ease: 'power2.inOut',
     onComplete: () => { lb.el.hidden = true; lb.img.removeAttribute('src'); },
@@ -1228,10 +1553,44 @@ lb.el.addEventListener('pointerup', (e) => {
 // back to the top: the brand in the nav and the button in the footer
 const toTop = (e) => {
   e.preventDefault();
-  window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
+  scrollToY(0, 1.6);
 };
 $('.brand').addEventListener('click', toTop);
 $('.to-top').addEventListener('click', toTop);
+$('.nav-work').addEventListener('click', () => goToWork(0));
+
+// the lede's words rise into place one after another; marked-up words stay whole
+function splitWords(el) {
+  let i = 0;
+  const wrap = (node, free) => {
+    const w = document.createElement('span');
+    w.className = free ? 'w is-free' : 'w';
+    const inner = document.createElement('span');
+    inner.className = 'wi';
+    inner.style.setProperty('--i', String(i++));
+    w.appendChild(inner);
+    node.parentNode.insertBefore(w, node);
+    inner.appendChild(node);
+  };
+  [...el.childNodes].forEach((node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const parts = node.textContent.split(/(\s+)/);
+      const frag = document.createDocumentFragment();
+      parts.forEach((part) => {
+        if (!part) return;
+        if (/^\s+$/.test(part)) { frag.appendChild(document.createTextNode(part)); return; }
+        const t = document.createTextNode(part);
+        frag.appendChild(t);
+      });
+      const nodes = [...frag.childNodes];
+      node.parentNode.replaceChild(frag, node);
+      nodes.forEach((t) => { if (!/^\s+$/.test(t.textContent)) wrap(t, false); });
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      wrap(node, true);
+    }
+  });
+}
+$$('.lede').forEach(splitWords);
 
 // copy rises in as it scrolls into view
 if ('IntersectionObserver' in window) {
@@ -1409,12 +1768,12 @@ const workUI = {
   });
   // the number rolls like the loader's counter: tens, then ones counted up to the last design
   $$('.wn-digits .col').forEach((col, k) => {
-    const strip = document.createElement('span');
-    strip.className = 'strip';
+    const s = document.createElement('span');
+    s.className = 'strip';
     const count = k === 0 ? Math.floor(PHOTOS / 10) + 1 : PHOTOS + 1;
-    strip.innerHTML = Array.from({ length: count }, (_, n) => `<span>${n % 10}</span>`).join('');
-    col.appendChild(strip);
-    workUI.cols.push({ strip, pos: -1 });
+    s.innerHTML = Array.from({ length: count }, (_, n) => `<span>${n % 10}</span>`).join('');
+    col.appendChild(s);
+    workUI.cols.push({ strip: s, pos: -1 });
   });
   // a keyboard press reports detail 0: only then does the viewer show its focus ring
   $('.work-open').addEventListener('click', (e) => openLightbox(Math.round(scroll.act), e.detail === 0));
@@ -1472,10 +1831,13 @@ function updateWorkUI(dt) {
   });
 }
 
-/* ---------- "View" tag that follows the pointer over a design ---------- */
+/* ---------- a tag that follows the pointer: "View" over a design, a hello over Saima ---------- */
 
 const tag = { el: $('.tag-view'), x: 0, y: 0, on: 0, idle: true };
-const finePointer = matchMedia('(pointer: fine)').matches;
+function setTag(isSaima) {
+  tag.el.classList.toggle('is-saima', isSaima);
+  tag.el.textContent = isSaima ? 'hi, I’m Saima!' : 'View';
+}
 function updateTag(dt) {
   if (!finePointer) return;
   const want = hovered && !drag ? 1 : 0;
@@ -1492,38 +1854,6 @@ function updateTag(dt) {
   tag.el.style.transform = `translate3d(${tag.x.toFixed(1)}px, ${tag.y.toFixed(1)}px, 0) scale(${(0.6 + 0.4 * tag.on).toFixed(3)})`;
   tag.el.style.opacity = tag.on.toFixed(3);
 }
-
-/* ---------- music ---------- */
-
-// The score starts as the page opens wherever the browser allows sound on its own; elsewhere it
-// starts on the first tap, click or key press anywhere. The nav button mutes it for this visit.
-const music = createMusic();
-const soundBtn = $('.sound');
-const soundLabel = $('.sound-label');
-function showSound() {
-  const waiting = music.on && !music.audible;
-  soundBtn.classList.toggle('is-on', music.audible);
-  soundBtn.classList.toggle('is-waiting', waiting);
-  soundBtn.setAttribute('aria-pressed', String(music.on));
-  soundLabel.textContent = waiting ? 'Tap for sound' : 'Sound';
-}
-music.onChange(showSound);
-soundBtn.addEventListener('click', () => {
-  if (music.on && !music.audible) music.unlock(); // still blocked: this tap is what lets it play
-  else if (music.on) music.pause();
-  else music.play();
-  showSound();
-});
-// a touch only counts as an interaction once the finger lifts, so listen for the whole gesture
-const GESTURES = ['pointerdown', 'pointerup', 'mousedown', 'touchend', 'click', 'keydown'];
-function onGesture(e) {
-  if (!soundBtn.contains(e.target)) music.unlock();
-}
-GESTURES.forEach((type) => window.addEventListener(type, onGesture, { capture: true, passive: true }));
-music.onChange(() => {
-  if (music.audible) GESTURES.forEach((type) => window.removeEventListener(type, onGesture, { capture: true }));
-});
-music.play();
 
 /* ------------------------------------------------------------------ */
 /* Timeline                                                            */
@@ -1548,81 +1878,60 @@ function nameFlip() {
   };
 }
 
-// backdrop in, name into the nav, nav links in, scene framed below the nav
-function addReveal(tl, gate, first) {
-  const ir = first ? {} : { immediateRender: false };
-  tl.to(fx, { reveal: 1, duration: 0.55, ease: 'power2.inOut' }, gate + 0.05);
-  tl.to(fx, { zoom: 1, duration: 1.6, ease: 'power2.out' }, gate + 0.05);
-  tl.to('.counter', { opacity: 0, filter: 'blur(6px)', y: -8, duration: 0.6, ease: 'power2.inOut' }, gate + 0.1);
-  tl.to('.loader-dot', { opacity: 0, duration: 0.3, ease: 'power1.out' }, gate + 0.25);
-
-  tl.to('.loader-name', { ...nameFlip(), duration: 1.0, ease: 'power3.inOut' }, gate + 0.45);
-  tl.set('.brand-word', { visibility: 'visible' }, gate + 1.45);
-  tl.set('.loader-name', { visibility: 'hidden' }, gate + 1.45);
-  tl.fromTo('.brand-dot', { opacity: 0, x: -6 }, { opacity: 1, x: 0, duration: 0.5, ...ir }, gate + 1.45);
-  tl.fromTo(['.role', '.sound'], { opacity: 0, y: 6 }, { opacity: 1, y: 0, duration: 0.6, stagger: 0.035, ...ir }, gate + 1.5);
-
-  tl.to(fx, { inset: 1, duration: 0.8, ease: 'power3.inOut', onUpdate: applyInset }, gate + 1.1);
-}
-
-// the reverse: nav links out, name back out of the nav, backdrop back to paper
-function addRewind(tl, at) {
-  tl.to(['.role', '.sound', '.brand-dot'], { opacity: 0, duration: 0.3, ease: 'power1.in' }, at);
-
-  tl.set('.loader-name', { visibility: 'visible' }, at + 0.3);
-  tl.set('.brand-word', { visibility: 'hidden' }, at + 0.3);
-  tl.to('.loader-name', { x: 0, y: 0, scale: 1, duration: 0.95, ease: 'power3.inOut' }, at + 0.3);
-  tl.to('.loader-dot', { opacity: 1, duration: 0.3, ease: 'power1.out' }, at + 1.0);
-
-  tl.to(fx, { inset: 0, duration: 0.8, ease: 'power3.inOut', onUpdate: applyInset }, at + 0.2);
-  tl.to(fx, { reveal: 0, duration: 0.7, ease: 'power2.inOut' }, at + 0.3);
-  tl.to(fx, { zoom: 1.06, duration: 0.7, ease: 'power2.inOut' }, at + 0.3);
-}
-
-// the name and the counter start straight away, while the photos are still arriving
+// the name and the counter start straight away, while the images are still arriving
 function playLoader() {
   gsap.fromTo('.loader-name .ch', { y: 0, yPercent: 112 }, { yPercent: 0, duration: 0.8, stagger: 0.06, ease: 'power3.out', delay: 0.04 });
   gsap.to(counter, { value: 100, duration: 1.15, ease: 'sine.inOut' });
 }
 
+function showNote() {
+  if (!note.el) return;
+  note.on = true;
+  note.el.classList.add('is-in');
+}
+
 function buildTimeline() {
   const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } });
 
-  /* part 1: reels fly out of the centre and fan into a rainbow, top first */
-  for (const c of arcCards) tl.to(c, { p: 1, duration: 0.6, ease: 'power2.out' }, 0.02 + c.rank * 0.115);
+  // the designs fly out of the centre into a circle, top first
+  for (const c of cards) tl.to(c, { p: 1, duration: 0.62, ease: 'power2.out' }, 0.02 + c.rank * 0.12);
 
   // hold until every image is decoded, then upload the big backdrop while the scene is still
-  const gate = 2.3;
+  const gate = 1.75;
   tl.addPause(gate, () => onAllLoaded(() => {
     if (bg.tex) renderer.initTexture(bg.tex);
     requestAnimationFrame(() => tl.play());
   }));
-  addReveal(tl, gate, true);
-  tl.to(arcState, { t: 1, duration: 1.3, ease: 'none' }, gate + 0.25);
-  tl.to(arcState, { speed: 0.13, duration: 1.6, ease: 'sine.inOut' }, gate + 0.5);
 
-  /* hold on the arc page, then rewind to the loader; the arc drops away, outer reels first */
-  const back = gate + 5.0;
-  addRewind(tl, back);
-  tl.to(arcState, { speed: 0, duration: 0.6, ease: 'power1.out' }, back);
-  const maxRank = ARC.N / 2;
-  for (const c of arcCards) tl.to(c, { p: 0, duration: 0.5, ease: 'power2.in' }, back + 0.1 + (maxRank - c.rank) * 0.018);
-  tl.set(counter, { value: 0 }, back + 0.6);
+  // the meadow blooms in and the loader steps aside
+  tl.to(fx, { reveal: 1, duration: 0.6, ease: 'power2.inOut' }, gate + 0.05);
+  tl.to(fx, { zoom: 1, duration: 1.8, ease: 'power2.out' }, gate + 0.05);
+  tl.to('.counter', { opacity: 0, filter: 'blur(6px)', y: -8, duration: 0.6, ease: 'power2.inOut' }, gate + 0.1);
+  tl.to('.loader-dot', { opacity: 0, duration: 0.3, ease: 'power1.out' }, gate + 0.25);
 
-  /* part 2: the counter rolls again while a ring builds, then the camera dives inside it */
-  const ring = back + 1.0;
-  intro.switchAt = back + 0.95;
-  tl.to('.counter', { opacity: 1, filter: 'blur(0px)', y: 0, duration: 0.4, ease: 'power2.out' }, ring - 0.05);
-  tl.to(counter, { value: 100, duration: 1.15, ease: 'sine.inOut' }, ring);
-  for (const c of ringCards) tl.to(c, { p: 1, duration: 0.6, ease: 'power3.out' }, ring + 0.12 + c.order * 0.1);
-  tl.to(ringState, { speed: 0.12, duration: 1.2, ease: 'sine.in' }, ring + 0.2);
+  // the circle tips back into an orbit and starts to turn
+  tl.to(ringState, { orbit: 1, duration: 1.5, ease: 'none' }, gate + 0.15);
+  tl.to(ringState, { speed: 0.14, duration: 1.4, ease: 'sine.inOut' }, gate + 0.6);
 
-  const gate2 = ring + 2.45;
-  addReveal(tl, gate2, false);
-  tl.to(ringState, { t: 1, duration: 1.05, ease: 'none' }, gate2 + 0.12);
-  tl.to(ringState, { speed: 0.21, duration: 1.2, ease: 'sine.inOut' }, gate2 + 0.4);
+  // Saima rises into the middle of it, a band of light passing over her
+  tl.to(saima, { rise: 1, duration: 1.5, ease: 'expo.out' }, gate + 0.35);
+  tl.fromTo(saima, { sheen: -0.6 }, { sheen: 1.8, duration: 1.7, ease: 'power2.inOut', immediateRender: false }, gate + 0.55);
 
-  tl.call(goLive, null, gate2 + 1.9);
+  // her name rises behind her, letter by letter
+  tl.to(nameAnim, { t: 2, duration: 2, ease: 'none' }, gate + 0.55);
+
+  // the loader's name shrinks into the nav, and the scene is framed below it
+  tl.to('.loader-name', { ...nameFlip(), duration: 1.0, ease: 'power3.inOut' }, gate + 0.45);
+  tl.set('.brand-word', { visibility: 'visible' }, gate + 1.45);
+  tl.set('.loader-name', { visibility: 'hidden' }, gate + 1.45);
+  tl.fromTo('.brand-dot', { opacity: 0, x: -6 }, { opacity: 1, x: 0, duration: 0.5 }, gate + 1.45);
+  tl.fromTo('.nav-work', { opacity: 0, y: 6 }, { opacity: 1, y: 0, duration: 0.6 }, gate + 1.5);
+  tl.to(fx, { inset: 1, duration: 0.8, ease: 'power3.inOut', onUpdate: applyInset }, gate + 1.1);
+
+  // the hand-written note under her name
+  tl.call(showNote, null, gate + 1.55);
+
+  tl.call(goLive, null, gate + 1.9);
   return tl;
 }
 
@@ -1631,6 +1940,7 @@ function goLive() {
   live = true;
   document.body.classList.add('is-live');
   document.documentElement.classList.remove('is-locked');
+  if (lenis) lenis.start();
   measureScroll();
   preloadFullPhotos();
 }
@@ -1642,10 +1952,13 @@ function seekIntro(tl, t) {
   counter.value = 100;
   tl.seek(t, true);
   applyInset();
-  // callbacks are suppressed while seeking, so settle the counters by hand
+  // callbacks are suppressed while seeking, so settle the counters and the note by hand
   counter.cols.forEach((c) => { c.pos = -1; });
   updateCounter(10);
-  if (t >= tl.duration() - 0.5) goLive();
+  if (t >= tl.duration() - 0.5) {
+    showNote();
+    goLive();
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1657,28 +1970,21 @@ function tick() {
   const now = performance.now();
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
+  if (lenis) lenis.raf(now);
   if (paused) return;
   clock += dt;
 
-  // which scene is on stage follows the timeline, so seeking lands in the right one
-  const ringNow = !!intro.tl && intro.tl.time() >= intro.switchAt;
-  if (ringNow !== phase.ring) {
-    phase.ring = ringNow;
-    document.body.classList.toggle('intro-ring', ringNow);
-  }
-  arcGroup.visible = !phase.ring;
-  ringGroup.visible = phase.ring;
-
-  updateCounter(dt);
-  updateHover(dt);
   updateScroll(dt);
-  if (phase.ring) updateRing(dt); else updateArc(dt);
+  updateHover(dt);
+  updateScene(dt);
   updateCamera();
   updatePetals(dt);
+  updateCounter(dt);
   updateWorkUI(dt);
-  updateHiRes();
+  updateHiRes(now);
   updateMarquee(dt);
   updateTag(dt);
+  adaptQuality(dt);
 
   // the colour field glows behind the design in focus
   const ffa = frame.w / frame.h;
@@ -1709,21 +2015,26 @@ async function boot() {
   resize();
   loadTextures();
 
-  // wait for the type so the name never swaps fonts mid-animation (capped so slow fonts never block)
+  // wait for the type so neither name swaps fonts mid-animation (capped so slow fonts never block)
   const fonts = document.fonts
     ? Promise.all([
       document.fonts.load('400 100px "Instrument Serif"'),
+      document.fonts.load('italic 400 100px "Instrument Serif"'),
       document.fonts.load('400 100px "Geist Mono"'),
     ]).catch(() => {})
     : Promise.resolve();
   await Promise.race([fonts, new Promise((r) => setTimeout(r, 1500))]);
+  fontsReady = true;
   resize();
-  // the handwriting and italics aren't needed for the intro; redraw the marks once they arrive
+  layoutName();
+  // a font that arrived after the cap, and the handwriting, redraw what uses them
   if (document.fonts) {
-    Promise.all([
-      document.fonts.load('600 40px Caveat'),
-      document.fonts.load('italic 400 40px "Instrument Serif"'),
-    ]).catch(() => {}).then(() => { drawDoodles(); buildMarquee(); measureScroll(); });
+    Promise.all([fonts, document.fonts.load('600 40px Caveat')]).catch(() => {}).then(() => {
+      layoutName();
+      drawDoodles();
+      buildMarquee();
+      measureScroll();
+    });
   }
 
   const tl = buildTimeline();
@@ -1750,13 +2061,12 @@ async function boot() {
   if (reduceMotion) {
     onAllLoaded(() => {
       seekIntro(tl, tl.duration());
-      arcState.speed *= 0.3;
       ringState.speed *= 0.3;
     });
     return;
   }
   playLoader();
-  // the reels fly out once their photos are decoded, so none arrives blank (capped for very slow networks)
+  // the designs fly out once their images are decoded, so none arrives blank (capped for slow networks)
   const cardsReady = new Promise((resolve) => onCardsLoaded(resolve));
   const atLeast = new Promise((resolve) => setTimeout(resolve, 250));
   const cap = new Promise((resolve) => setTimeout(resolve, 8000));
