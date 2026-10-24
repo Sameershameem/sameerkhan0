@@ -16,7 +16,10 @@ const BG_FOCUS = { x: 0.5, y: 0.68 }; // zoom anchor (the hill crest), y from th
 const pad2 = (n) => String(n).padStart(2, '0');
 const cardSrc = (i) => `assets/img/work/card/${pad2(i + 1)}.webp`;
 const fullSrc = (i) => `assets/img/work/full/${pad2(i + 1)}.webp`;
-const PORTRAIT_SRC = 'assets/img/saima/saima.webp';
+// Saima's cut-out comes in several heights; the page takes the smallest that covers her on screen
+const PORTRAIT_SIZES = [1200, 1600, 2000, 2600];
+const portraitSrc = (h) => `assets/img/saima/saima-${h}.webp`;
+const portraitFile = (need) => PORTRAIT_SIZES.find((h) => h >= need) || PORTRAIT_SIZES[PORTRAIT_SIZES.length - 1];
 
 // Saima's cut-out, measured from the image: fractions of its width (w) or height (h)
 const FIG = {
@@ -38,7 +41,7 @@ const query = new URLSearchParams(location.search);
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const finePointer = matchMedia('(pointer: fine)').matches;
 
-const intro = { tl: null };
+const intro = { tl: null, done: false };
 
 // No WebGL: the portrait and name as plain page content, and the designs as a scrolling strip.
 function fallback() {
@@ -49,7 +52,7 @@ function fallback() {
   name.innerHTML = 'Saima <em>Ahmed</em>';
   const img = new Image();
   img.className = 'fallback-portrait';
-  img.src = PORTRAIT_SRC;
+  img.src = portraitSrc(1600);
   img.alt = 'Saima Ahmed';
   hero.append(name, img);
   const strip = document.createElement('div');
@@ -398,16 +401,27 @@ const SAIMA_Z = 0;
 const saima = { rise: 0, sheen: -1, x: 0, y: -5, H: 9, op: 0 };
 const saimaGeo = new THREE.PlaneGeometry(FIG.aspect, 1);
 saimaGeo.translate(0, 0.5, 0); // origin at the middle of the bottom edge, where she is cropped
+// She is drawn flat to the screen at a box in the canvas's own pixels (uRect, set by placeSaima), so
+// the pointer's parallax moves the ring and her name round her while she stays pin-sharp. Her mesh
+// keeps its place in the scene for picking; the draw order layers her, so she needs no depth test.
 const saimaMat = new THREE.ShaderMaterial({
-  uniforms: { uMap: { value: clearTex }, uOpacity: { value: 0 }, uSheen: { value: -1 } },
-  vertexShader: uvVertex,
+  uniforms: { uMap: { value: clearTex }, uOpacity: { value: 0 }, uSheen: { value: -1 }, uRect: { value: new THREE.Vector4(-1, -1, 0, 0) } },
+  vertexShader: /* glsl */`
+    uniform vec4 uRect; // left, bottom, width, height in clip space
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = vec4(uRect.xy + uv * uRect.zw, 0.0, 1.0);
+    }
+  `,
   fragmentShader: /* glsl */`
     uniform sampler2D uMap;
     uniform float uOpacity;
     uniform float uSheen;
     varying vec2 vUv;
     void main() {
-      vec4 t = texture2D(uMap, vec2(vUv.x, 1.0 - vUv.y));
+      // the texture is sized to her pixels on screen; the bias keeps it on the full-size level
+      vec4 t = texture2D(uMap, vec2(vUv.x, 1.0 - vUv.y), -0.6);
       if (t.a < 0.004) discard;
       // a touch of warmth so she sits in the sunlit meadow
       vec3 c = t.rgb * vec3(1.03, 1.0, 0.97);
@@ -419,9 +433,11 @@ const saimaMat = new THREE.ShaderMaterial({
   `,
   transparent: true,
   depthWrite: false,
+  depthTest: false,
 });
 const saimaMesh = new THREE.Mesh(saimaGeo, saimaMat);
 saimaMesh.renderOrder = ORDER.saima;
+saimaMesh.frustumCulled = false;
 saimaMesh.visible = false;
 scene.add(saimaMesh);
 
@@ -560,7 +576,6 @@ const assets = window.__siteAssets || {
   cards: Array.from({ length: PHOTOS }, (_, i) => cardSrc(i)),
   bg: 'assets/img/bg/hills-2560.webp',
   bgWidth: 2560,
-  portrait: PORTRAIT_SRC,
   pre: {},
 };
 
@@ -570,8 +585,7 @@ function fetchBlob(url, fresh) {
 }
 
 // decoded off the main thread where the browser can
-async function decodeImage(url, fresh = false, options = undefined) {
-  const blob = await fetchBlob(url, fresh);
+async function decodeBlob(blob, options = undefined) {
   if (typeof createImageBitmap === 'function') {
     try { return await createImageBitmap(blob, options); } catch { /* decode through an <img> instead */ }
   }
@@ -580,6 +594,9 @@ async function decodeImage(url, fresh = false, options = undefined) {
   await img.decode();
   URL.revokeObjectURL(img.src);
   return img;
+}
+async function decodeImage(url, fresh = false, options = undefined) {
+  return decodeBlob(await fetchBlob(url, fresh), options);
 }
 // an early download that failed gets one fresh try
 const loadImage = (url, options) => decodeImage(url, false, options).catch(() => decodeImage(url, true, options));
@@ -596,13 +613,60 @@ function applyBackdrop(tex) {
   bgMat.uniforms.uImgAspect.value = tex.image.width / tex.image.height;
 }
 
+// Saima's texture is resampled by the browser's high-quality scaler to exactly her height in the
+// canvas's pixels, so the GPU draws it 1:1 instead of blending in a softer mipmap level
+const portrait = { blob: null, fileH: 0, tex: null, texW: 0, texH: 0, busy: false };
+function portraitNeed() {
+  const fh = Math.max(1, view.h - panel.t);
+  return Math.max(64, Math.round((hero.Hs / 10) * fh * (canvas.height / Math.max(1, view.h))));
+}
+function decodePortrait() {
+  const need = portraitNeed();
+  const k = need / portrait.fileH;
+  const opts = { premultiplyAlpha: 'none' }; // straight alpha, so her edges blend cleanly over the sky
+  if (k > 0.3 && k < 1.3 && Math.abs(k - 1) > 0.005) {
+    Object.assign(opts, { resizeWidth: Math.round(need * FIG.aspect), resizeHeight: need, resizeQuality: 'high' });
+  }
+  return decodeBlob(portrait.blob, opts);
+}
 function applyPortrait(img) {
   const tex = prepTexture(new THREE.Texture(img));
   tex.anisotropy = 1;
   renderer.initTexture(tex);
+  const old = portrait.tex;
+  portrait.tex = tex;
+  portrait.texW = img.width;
+  portrait.texH = img.height;
   saimaMat.uniforms.uMap.value = tex;
   saimaShadowMat.uniforms.uMap.value = tex;
-  buildPortraitMask(img);
+  if (old) {
+    old.dispose();
+    if (old.image && old.image.close) old.image.close();
+  }
+  if (!portraitMask.data) buildPortraitMask(img);
+}
+async function loadPortrait() {
+  portrait.fileH = assets.portraitH || portraitFile(portraitNeed());
+  const url = assets.portrait || portraitSrc(portrait.fileH);
+  portrait.blob = await fetchBlob(url).catch(() => fetchBlob(url, true));
+  applyPortrait(await decodePortrait());
+}
+// after a resize: a new size from the same file, or a bigger file for a bigger screen
+async function refreshPortrait() {
+  if (!portrait.blob || portrait.busy) return;
+  const need = portraitNeed();
+  if (Math.abs(need - portrait.texH) / portrait.texH < 0.04) return;
+  portrait.busy = true;
+  try {
+    const file = portraitFile(need);
+    if (file > portrait.fileH) {
+      portrait.blob = await fetchBlob(portraitSrc(file), true);
+      portrait.fileH = file;
+    }
+    applyPortrait(await decodePortrait());
+    quality.wait = Math.max(quality.wait, 0.3);
+  } catch { /* keep the texture it has */ }
+  portrait.busy = false;
 }
 
 let cardsLoaded = 0;
@@ -624,8 +688,7 @@ function loadTextures() {
     loadImage(url).then((img) => applyTexture(i, new THREE.Texture(img))).catch(() => {}).finally(cardDone);
   });
   loadImage(bgUrl).then((img) => applyBackdrop(new THREE.Texture(img))).catch(() => {}).finally(markLoaded);
-  // straight (not premultiplied) alpha, so her edges blend cleanly over the sky
-  loadImage(assets.portrait || PORTRAIT_SRC, { premultiplyAlpha: 'none' }).then(applyPortrait).catch(() => {}).finally(markLoaded);
+  loadPortrait().catch(() => {}).finally(markLoaded);
 }
 
 // The design in focus on the work wheel, and its neighbours, swap to sharper textures so their type
@@ -651,13 +714,15 @@ function wantHiRes(i) {
   }).catch(() => hiRes.delete(i));
 }
 function flushUploads(now) {
-  if (!uploads.length || now - lastUpload < 120 || Math.abs(scroll.vel) > 700) return;
+  // an upload can take a frame or two on a phone, so it waits until the page (and the wheel) is still
+  if (!uploads.length || now - lastUpload < 200 || scroll.still < 0.7) return;
   const i = uploads.shift();
   const entry = hiRes.get(i);
   if (!entry || entry.dropped || !entry.img) return;
   entry.tex = prepTexture(new THREE.Texture(entry.img));
   renderer.initTexture(entry.tex);
   lastUpload = now;
+  quality.wait = Math.max(quality.wait, 0.2);
   cards[i].mat.uniforms.uMap.value = entry.tex;
   cards[i].hi = true;
 }
@@ -675,7 +740,7 @@ function dropHiRes(i) {
 function updateHiRes(now) {
   const on = scroll.w > 0.35 && scroll.f < 0.5;
   const center = Math.round(scroll.act);
-  for (const i of [...hiRes.keys()]) if (!on || Math.abs(i - center) > 1) dropHiRes(i);
+  for (const i of hiRes.keys()) if (!on || Math.abs(i - center) > 1) dropHiRes(i);
   if (on) {
     wantHiRes(center);
     if (center > 0) wantHiRes(center - 1);
@@ -712,7 +777,7 @@ const hero = { wide: true, fa: 1.6, Hs: 9, x: 0, R: 6, tilt: 0.17, nameZ: -8.5, 
 const note = { el: $('.hero-note'), on: false, fits: true, x: -1, y: -1, op: -1 };
 // About on wide screens: she steps into the right half and the ring tightens round her
 const about = { x: 4, Hs: 8, R: 3.5 };
-const quality = { scale: 1, acc: 0, n: 0 };
+const quality = { scale: 1, n: 0, late: 0, wait: 2 };
 let fontsReady = false;
 
 function layoutLoader(fa0) {
@@ -829,11 +894,18 @@ function layoutName() {
   renderer.initTexture(w1.tex);
 }
 
+// up to 2x with a mouse, 3x on phones and tablets; a huge, dense screen draws a little under its own
+function targetDpr() {
+  const fit = Math.sqrt(16e6 / Math.max(1, view.w * view.h));
+  return Math.min(window.devicePixelRatio || 1, finePointer ? 2 : 3, fit);
+}
+
 function measure() {
   view.w = Math.max(1, canvas.clientWidth);
   view.h = Math.max(1, canvas.clientHeight);
-  // big screens and dense phones both cap at 2x; slower devices step down from there
-  view.dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 2) * quality.scale);
+  // the canvas works at the screen's own density, so the scene is as sharp as the page's text;
+  // slower devices step down from there
+  view.dpr = Math.max(1, targetDpr() * quality.scale);
   // resizing the drawing buffer clears it, so only do it when the size really changed
   const size = renderer.getSize(new THREE.Vector2());
   if (renderer.getPixelRatio() !== view.dpr || size.x !== view.w || size.y !== view.h) {
@@ -858,7 +930,13 @@ function measure() {
 }
 
 let decorTimer = 0;
-function resize() {
+const laidOut = { w: 0, h: 0 };
+function resize(force = false) {
+  // phones fire resizes as their address bar slides in and out mid-scroll; the canvas (100lvh) keeps
+  // its size through those, so nothing is redone and the scroll carries on undisturbed
+  if (!force && canvas.clientWidth === laidOut.w && canvas.clientHeight === laidOut.h) return;
+  laidOut.w = canvas.clientWidth;
+  laidOut.h = canvas.clientHeight;
   measure();
   applyInset();
   measureScroll();
@@ -867,6 +945,7 @@ function resize() {
     layoutName();
     drawDoodles();
     buildMarquee();
+    refreshPortrait();
   }, 120);
 }
 
@@ -887,7 +966,7 @@ function applyInset() {
 //    unrolls into a reel that travels with the page
 // w: about -> work, the cards turn into a wheel that brings one design forward at a time (act)
 // f: work -> footer, the cards roll back up into a ring above the footer
-const scroll = { y: 0, raw: 0, vh: 1, footTop: 1, a: 0, w: 0, f: 0, act: 0, dim: 0, offset: 0, tint: 0, vel: 0 };
+const scroll = { y: 0, raw: 0, vh: 1, footTop: 1, a: 0, w: 0, f: 0, act: 0, dim: 0, offset: 0, tint: 0, vel: 0, still: 0, settle: 0 };
 const work = { top: 0, step: 1, vertical: true, x: 3, y: 0, Ha: 6 };
 const footRing = { R: 4.3, yc: 1.5 };
 const FOOT_TILT = 0.36;
@@ -914,7 +993,7 @@ const textBlocks = $$('.about .block-in, .site-foot .foot-in');
 const textRects = []; // the copy blocks' boxes in page coordinates, so no layout is read per frame
 
 function measureScroll() {
-  scroll.vh = window.innerHeight;
+  scroll.vh = view.h; // the large viewport: steady while a phone's address bar comes and goes
   const foot = $('.site-foot');
   scroll.footTop = foot ? foot.offsetTop : document.documentElement.scrollHeight;
   work.top = workEl.offsetTop;
@@ -938,8 +1017,8 @@ function measureScroll() {
   }
 }
 
-// smooth wheel scrolling on desktop; touch keeps the browser's own momentum
-const lenis = window.Lenis && finePointer && !reduceMotion ? new window.Lenis({ lerp: 0.09, smoothWheel: true }) : null;
+// smooth wheel scrolling on desktop, quick to follow the wheel; touch keeps the browser's own momentum
+const lenis = window.Lenis && finePointer && !reduceMotion ? new window.Lenis({ lerp: 0.12, smoothWheel: true }) : null;
 if (lenis) lenis.stop();
 const easeScroll = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 function scrollToY(y, duration = 1.2) {
@@ -1010,10 +1089,11 @@ function updateScroll(dt) {
   // the nav steps aside while reading down the page and returns on the way back up
   const dy = raw - scroll.raw;
   let away = nav.classList.contains('is-away');
-  if (raw > scroll.vh * 0.5 && dy > 3) away = true;
+  if (raw > scroll.vh * 0.5 && dy > 3 && intro.done) away = true;
   else if (dy < -3 || raw < scroll.vh * 0.5) away = false;
   if (away !== nav.classList.contains('is-away')) nav.classList.toggle('is-away', away);
   scroll.vel += ((dt > 0 ? dy / dt : 0) - scroll.vel) * (1 - Math.exp(-dt * 6));
+  scroll.still = Math.abs(dy) > 0.5 ? 0 : scroll.still + dt;
   scroll.raw = raw;
 
   // the page itself scrolls smoothly (Lenis on wheels, momentum on touch), so the scene follows it
@@ -1029,7 +1109,11 @@ function updateScroll(dt) {
   scroll.a = smoothstep(y, vh * 0.02, vh * 0.9);
   scroll.w = smoothstep(y, workStart, work.top - vh * 0.04);
   scroll.f = smoothstep(y, footStart + vh * 0.05, footStart + vh * 0.9);
-  scroll.act = clamp((y - work.top) / work.step, 0, PHOTOS - 1);
+  // once the page comes to rest, the wheel turns on to the nearest design so it never stops halfway
+  const act = clamp((y - work.top) / work.step, 0, PHOTOS - 1);
+  const settleTo = scroll.still > 0.15 && scroll.w > 0.98 && scroll.f < 0.02 ? Math.round(act) - act : 0;
+  scroll.settle += (settleTo - scroll.settle) * (1 - Math.exp(-dt * 6));
+  scroll.act = act + scroll.settle;
   // the reel only travels while every card is in it, so no card wraps around mid-flight
   scroll.offset = (clamp(y, vh * 0.9, Math.max(vh * 0.9, workStart)) - vh * 0.9) / vh * strip.perVh;
   // the hills sink as the page rises, leaving open sky behind the copy
@@ -1130,8 +1214,35 @@ function workPose(c, pos, quat) {
 /* Per-frame scene update                                              */
 /* ------------------------------------------------------------------ */
 
-const pointer = { x: 0, y: 0, sx: 0, sy: 0, px: -1, py: -1, inside: false };
+const pointer = { x: 0, y: 0, sx: 0, sy: 0, px: -1, py: -1, inside: false, moved: false };
 let clock = 0;
+
+// Saima's box in the canvas's own pixels, as the unmoved camera sees her at z = 0. Once she is at
+// rest it is snapped to whole pixels and to the texture's exact size, so every texel lands on a pixel.
+const sBox = { l: 0, b: 0, h: 0 };
+function placeSaima(x, y, H) {
+  const bw = canvas.width, bh = canvas.height;
+  const kx = bw / view.w, ky = bh / view.h; // canvas pixels per css px
+  const unit = frame.h / 10; // css px per world unit at z = 0
+  let h = H * unit * ky;
+  let l = (frame.x + frame.w / 2 + (x - (H * FIG.aspect) / 2) * unit) * kx;
+  let b = bh - (frame.y + frame.h / 2 - y * unit) * ky;
+  const still = Math.abs(l - sBox.l) + Math.abs(b - sBox.b) + Math.abs(h - sBox.h) < 0.3;
+  sBox.l = l;
+  sBox.b = b;
+  sBox.h = h;
+  let w = h * FIG.aspect;
+  if (still) {
+    if (portrait.texH && Math.abs(h / portrait.texH - 1) < 0.02) {
+      l += (w - portrait.texW) / 2;
+      w = portrait.texW;
+      h = portrait.texH;
+    }
+    l = Math.round(l);
+    b = Math.round(b);
+  }
+  saimaMat.uniforms.uRect.value.set((l / bw) * 2 - 1, (b / bh) * 2 - 1, (w / bw) * 2, (h / bh) * 2);
+}
 
 function updateScene(dt) {
   ringState.spin += (ringState.speed + ringState.user) * dt;
@@ -1221,19 +1332,20 @@ function updateScene(dt) {
     c.mesh.renderOrder = shown && p1.z < SAIMA_Z ? ORDER.behind : ORDER.front;
     c.mat.uniforms.uBend.value = bend;
     c.mat.uniforms.uOpacity.value = opacity;
-    c.shadow.material.uniforms.uAlpha.value = 0.34 * opacity * (1 - bend);
+    const sa = 0.34 * opacity * (1 - bend);
+    c.shadow.visible = sa > 0.002;
+    c.shadow.material.uniforms.uAlpha.value = sa;
   }
 
-  // Saima breathes a little and sways with the breeze
+  // Saima holds perfectly still, square to the screen, so she stays sharp
   saimaMesh.visible = saimaShadow.visible = shown;
   if (shown) {
-    const breathe = 1 + 0.004 * Math.sin(clock * 1.5);
-    const sway = Math.sin(clock * 0.6) * 0.02;
-    saima.x = x + sway;
+    saima.x = x;
     saima.y = y;
     saima.H = H;
-    saimaMesh.position.set(saima.x, y, SAIMA_Z);
-    saimaMesh.scale.set(H * breathe, H * breathe, 1);
+    saimaMesh.position.set(x, y, SAIMA_Z);
+    saimaMesh.scale.set(H, H, 1);
+    placeSaima(x, y, H);
     saimaMat.uniforms.uOpacity.value = op;
     saimaMat.uniforms.uSheen.value = saima.sheen;
     saimaShadow.position.set(saima.x + H * 0.025, y - H * 0.004, SAIMA_Z - 0.35);
@@ -1259,7 +1371,8 @@ function updateScene(dt) {
 // the hand-written note follows the end of her name
 function updateNote(nameOp, lift, k) {
   if (!note.el) return;
-  const op = note.on && note.fits ? nameOp : 0;
+  // it fades a little ahead of the name, so it is gone before it reaches the nav
+  const op = note.on && note.fits ? nameOp * nameOp : 0;
   if (op > 0.004) {
     projected.set(hero.note.x * k, (hero.note.y + lift) * k, hero.nameZ).project(camera);
     const x = Math.round(((projected.x + 1) / 2) * view.w);
@@ -1308,18 +1421,26 @@ function updatePetals(dt) {
   petalMesh.instanceMatrix.needsUpdate = true;
 }
 
-// slower devices step their pixel density down until the frame rate holds
+// a device that keeps missing frames steps its pixel density down until the motion runs smoothly;
+// one-off hitches (an upload, a font arriving) don't count, only a steady run of late frames
 function adaptQuality(dt) {
-  if (!live || paused || document.hidden || dt <= 0 || dt >= 0.1) return;
-  quality.acc += dt;
+  if (!live || paused || document.hidden) {
+    quality.n = quality.late = 0;
+    return;
+  }
+  if (quality.wait > 0) {
+    quality.wait -= dt;
+    return;
+  }
   quality.n++;
-  if (quality.n < 120) return;
-  const avg = quality.acc / quality.n;
-  quality.acc = 0;
-  quality.n = 0;
-  if (avg > 1 / 48 && Math.min(window.devicePixelRatio || 1, 2) * quality.scale > 1.01) {
-    quality.scale = Math.max(0.5, quality.scale - 0.15);
-    resize();
+  if (dt > 1 / 45) quality.late++;
+  if (quality.n < 90) return;
+  const late = quality.late / quality.n;
+  quality.n = quality.late = 0;
+  if (late > 0.25 && targetDpr() * quality.scale > 1.01) {
+    quality.scale = Math.max(0.6, quality.scale - 0.15);
+    measure();
+    quality.wait = 1;
   }
 }
 
@@ -1362,6 +1483,8 @@ function updateCounter(dt) {
 const raycaster = new THREE.Raycaster();
 const ndc = new THREE.Vector2();
 const SAIMA = { saima: true };
+const pickTargets = [];
+const pickHits = [];
 let live = false;
 let hovered = null;
 let drag = null;
@@ -1374,9 +1497,11 @@ function pick(clientX, clientY) {
   if (clientX < frame.x || clientX > frame.x + frame.w || clientY < frame.y || clientY > frame.y + frame.h) return null;
   ndc.set((clientX / view.w) * 2 - 1, -(clientY / view.h) * 2 + 1);
   raycaster.setFromCamera(ndc, camera);
-  const targets = cards.filter((c) => c.mesh.visible && c.mat.uniforms.uOpacity.value > 0.25).map((c) => c.mesh);
-  if (saimaMesh.visible && saimaMat.uniforms.uOpacity.value > 0.5) targets.push(saimaMesh);
-  for (const hit of raycaster.intersectObjects(targets, false)) {
+  pickTargets.length = 0;
+  for (const c of cards) if (c.mesh.visible && c.mat.uniforms.uOpacity.value > 0.25) pickTargets.push(c.mesh);
+  if (saimaMesh.visible && saimaMat.uniforms.uOpacity.value > 0.5) pickTargets.push(saimaMesh);
+  pickHits.length = 0;
+  for (const hit of raycaster.intersectObjects(pickTargets, false, pickHits)) {
     if (hit.object !== saimaMesh) return hit.object.userData.card;
     if (hit.uv && portraitAlpha(hit.uv.x, hit.uv.y) > 0.4) return SAIMA;
   }
@@ -1396,6 +1521,7 @@ canvas.addEventListener('pointermove', (e) => {
   pointer.x = (e.clientX / view.w) * 2 - 1;
   pointer.y = (e.clientY / view.h) * 2 - 1;
   pointer.inside = true;
+  pointer.moved = true;
   if (!drag) return;
   const dx = e.clientX - drag.x;
   drag.x = e.clientX;
@@ -1437,9 +1563,17 @@ canvas.addEventListener('pointercancel', () => {
   document.body.classList.remove('is-dragging');
 });
 
+let hoverFrame = 0;
 function updateHover(dt) {
+  // the scene moves under a still pointer too, so the pick is redone on a move and every few frames
   let target = null;
-  if (live && !drag && pointer.inside && pointer.px >= 0) target = pick(pointer.px, pointer.py);
+  if (live && !drag && pointer.inside && pointer.px >= 0) {
+    target = hovered;
+    if (pointer.moved || ++hoverFrame % 4 === 0) {
+      pointer.moved = false;
+      target = pick(pointer.px, pointer.py);
+    }
+  }
   if (target !== hovered) {
     hovered = target;
     document.body.classList.toggle('is-hover', !!hovered);
@@ -1753,7 +1887,7 @@ const workUI = {
   $('.wn-of').textContent = `/ ${pad2(PHOTOS)}`;
   const ticksBox = $('.work-ticks');
   WORKS.forEach((w, i) => {
-    // one snap point per design, so a flick lands on the next one
+    // one marker per design, where the page stands when that design is in focus
     const snap = document.createElement('span');
     snap.className = 'work-snap';
     snap.style.setProperty('--i', String(i));
@@ -1894,10 +2028,10 @@ function buildTimeline() {
   const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } });
 
   // the designs fly out of the centre into a circle, top first
-  for (const c of cards) tl.to(c, { p: 1, duration: 0.62, ease: 'power2.out' }, 0.02 + c.rank * 0.12);
+  for (const c of cards) tl.to(c, { p: 1, duration: 0.6, ease: 'power2.out' }, 0.02 + c.rank * 0.1);
 
   // hold until every image is decoded, then upload the big backdrop while the scene is still
-  const gate = 1.75;
+  const gate = 1.5;
   tl.addPause(gate, () => onAllLoaded(() => {
     if (bg.tex) renderer.initTexture(bg.tex);
     requestAnimationFrame(() => tl.play());
@@ -1928,10 +2062,12 @@ function buildTimeline() {
   tl.fromTo('.nav-work', { opacity: 0, y: 6 }, { opacity: 1, y: 0, duration: 0.6 }, gate + 1.5);
   tl.to(fx, { inset: 1, duration: 0.8, ease: 'power3.inOut', onUpdate: applyInset }, gate + 1.1);
 
+  // the page can be scrolled as soon as she has arrived; the last touches finish on the way
+  tl.call(goLive, null, gate + 1.2);
+
   // the hand-written note under her name
   tl.call(showNote, null, gate + 1.55);
-
-  tl.call(goLive, null, gate + 1.9);
+  tl.call(() => { intro.done = true; }, null, gate + 1.9);
   return tl;
 }
 
@@ -1958,6 +2094,7 @@ function seekIntro(tl, t) {
   if (t >= tl.duration() - 0.5) {
     showNote();
     goLive();
+    intro.done = true;
   }
 }
 
@@ -2012,7 +2149,7 @@ function tick() {
 async function boot() {
   if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
   window.scrollTo(0, 0);
-  resize();
+  resize(true);
   loadTextures();
 
   // wait for the type so neither name swaps fonts mid-animation (capped so slow fonts never block)
@@ -2025,7 +2162,7 @@ async function boot() {
     : Promise.resolve();
   await Promise.race([fonts, new Promise((r) => setTimeout(r, 1500))]);
   fontsReady = true;
-  resize();
+  resize(true);
   layoutName();
   // a font that arrived after the cap, and the handwriting, redraw what uses them
   if (document.fonts) {

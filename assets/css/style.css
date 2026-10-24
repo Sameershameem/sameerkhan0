@@ -66,11 +66,8 @@ html.lenis, html.lenis body { height: auto; }
 .lenis.lenis-stopped { overflow: clip; }
 html { scrollbar-width: none; }
 html::-webkit-scrollbar { display: none; }
-/* the page scrolls once the intro has played; the work section settles on one design at a time */
+/* the page scrolls once the intro has played */
 html.is-locked, html.is-locked body { overflow: hidden; }
-@media (pointer: coarse) {
-  html:not(.is-locked) { scroll-snap-type: y proximity; }
-}
 
 body {
   --muted: rgba(17, 17, 16, .66);
@@ -444,16 +441,16 @@ body.is-live.is-dragging #stage { cursor: grabbing; }
 }
 
 /* ---------- Work ---------- */
-/* one screen per design: the panel pins while the 3D wheel brings each design forward */
+/* the panel pins while the 3D wheel brings the designs forward, one for every --step of scroll */
 .work {
-  --step: 45vh;
+  --step: 40vh;
   --tail: 25vh;
   position: relative;
   height: calc(100vh + (var(--n, 16) - 1) * var(--step) + var(--tail));
 }
 @supports (height: 1svh) {
   .work {
-    --step: 45svh;
+    --step: 40svh;
     --tail: 25svh;
     height: calc(100svh + (var(--n, 16) - 1) * var(--step) + var(--tail));
   }
@@ -464,7 +461,6 @@ body.is-live.is-dragging #stage { cursor: grabbing; }
   top: calc(var(--i) * var(--step));
   width: 1px;
   height: 1px;
-  scroll-snap-align: start;
   pointer-events: none;
 }
 .work-pin {
