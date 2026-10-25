@@ -6,13 +6,26 @@ gsap.registerPlugin(ScrollTrigger);
 
 export const finePointer = typeof window !== 'undefined' && matchMedia('(pointer: fine)').matches;
 export const reducedMotion = typeof window !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
-export const webgl = (() => {
+// WebGL 2, and whether it is drawn in software (no GPU), where the 3D would only stutter
+const gl = (() => {
+  if (typeof document === 'undefined') return { webgl: false, software: false };
   try {
-    return !!document.createElement('canvas').getContext('webgl2');
+    const ctx = document.createElement('canvas').getContext('webgl2');
+    if (!ctx) return { webgl: false, software: false };
+    // Firefox names the renderer outright; Chrome and Safari need the debug extension for it
+    let name = String(ctx.getParameter(ctx.RENDERER));
+    if (/^webkit webgl$/i.test(name)) {
+      const info = ctx.getExtension('WEBGL_debug_renderer_info');
+      if (info) name = String(ctx.getParameter(info.UNMASKED_RENDERER_WEBGL));
+    }
+    ctx.getExtension('WEBGL_lose_context')?.loseContext();
+    return { webgl: true, software: /swiftshader|llvmpipe|softpipe|software|basic render/i.test(name) };
   } catch {
-    return false;
+    return { webgl: false, software: false };
   }
 })();
+export const webgl = gl.webgl;
+export const softwareGL = gl.software;
 
 // Smooth wheel scrolling with Lenis on desktop, kept in step with GSAP's clock and ScrollTrigger;
 // touch screens keep the browser's own momentum, which is the fastest and smoothest there is.
@@ -22,7 +35,6 @@ export function initScroll() {
   lenis = new Lenis({ lerp: 0.11, smoothWheel: true });
   lenis.on('scroll', ScrollTrigger.update);
   gsap.ticker.add((t) => lenis.raf(t * 1000));
-  gsap.ticker.lagSmoothing(0);
   return lenis;
 }
 
