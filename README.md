@@ -1,9 +1,39 @@
-- 👋 Hi, I’m @sameerkhan0
-- 👀 I’m interested in coding.
-- 🌱 I’m currently learning polymer engg.  ...
-- 📫 How to reach me raziq9938@gmail.com..
+# Saima Ahmed — Portfolio
 
-<!---
-sameerkhan0/sameerkhan0 is a ✨ special ✨ repository because its `README.md` (this file) appears on your GitHub profile.
-You can click the Preview link to take a look at your changes.
---->
+A one-page portfolio for Saima Ahmed, graphic designer, built with React, Vite and Tailwind CSS, with
+three.js for the 3D:
+
+- **Intro:** on a plain white screen a plush teddy (blue shark hood, white felt teeth, fish on the
+  belly) walks in from the right, stops in the middle, turns to look at you, and the camera dives
+  into its mocha eye.
+- **Hero:** the iris breaks into particles that gather into Saima's portrait, her name sits behind her,
+  and liquid chrome wraps round her.
+- **The rest:** About, a pinned horizontal gallery of her designs with a full-size viewer, Services
+  and Contact.
+
+Palette: Mocha Brown `#6F4E37`, Platinum Silver `#E5E4E2`, Pale Lavender `#E6E0F0`.
+
+## Run it
+
+```bash
+npm install
+npm run dev       # local dev server
+npm run build     # production build in dist/
+npm run preview   # serve the build
+```
+
+## Edit the content
+
+| What | Where |
+| --- | --- |
+| Designs: title, client, type, aspect | `src/data/works.js` |
+| Design images | `public/work/{card-sm,card,full}/NN.webp` (512, 768 and up to 1600 px wide) |
+| Contact details (email, Instagram, phone) | `CONTACT` in `src/data/site.js` |
+| Services list | `SERVICES` in `src/data/site.js` |
+| Portrait | `public/saima/saima-{1200,1600,2000,2600}.webp` |
+
+## Deploy
+
+`npm run build` writes a static site to `dist/` with relative paths, so it can be hosted from any
+folder on any static host. On GitHub Pages, set **Settings → Pages → Source** to **GitHub Actions**
+and use a workflow that runs `npm ci && npm run build` and uploads `dist/`.
