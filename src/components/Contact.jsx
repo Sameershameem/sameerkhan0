@@ -35,8 +35,20 @@ export default function Contact() {
           )}
         </Rise>
       </div>
-      <div className="mt-[12svh] flex items-center justify-between border-t border-lavender/20 pt-6 text-[10px] uppercase tracking-[0.3em] text-lavender/70">
+      <div className="mt-[12svh] flex flex-wrap items-center justify-between gap-x-8 gap-y-4 border-t border-lavender/20 pt-6 text-[10px] uppercase tracking-[0.3em] text-lavender/70">
         <span>© {new Date().getFullYear()} Saima Ahmed</span>
+        {/* the credit sits between the two on wide screens, on its own line below them on narrow ones */}
+        <span className="order-last w-full land:order-none land:w-auto">
+          Designed and built by{' '}
+          <a
+            href="https://portfolio-psi-inky-18.vercel.app"
+            target="_blank"
+            rel="noopener"
+            className="-my-2 inline-block py-2 text-lavender underline decoration-lavender/40 decoration-1 underline-offset-[0.35em] transition-colors hover:decoration-lavender"
+          >
+            Sameer Shameem
+          </a>
+        </span>
         <button type="button" onClick={() => scrollToTarget(0, 2)} className="transition-colors hover:text-lavender">
           Back to top ↑
         </button>
