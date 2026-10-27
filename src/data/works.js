@@ -1,22 +1,23 @@
-// The designs on the page, in order. Images live in public/work/{card-sm,card,full}/NN.webp.
-// client is optional; leave it empty to hide it. aspect is height / width (1 for square posts, 1.25 for 4:5).
+// The projects on the page, in order. Images live in public/work/{card-sm,card,full}/NN.webp
+// (512, 768 and 1600 px wide). client is optional; leave it empty to hide it. aspect is height / width
+// (1 for square, 1.25 for 4:5).
 export const WORKS = [
-  { title: 'Rose Ice Cream Shake', client: 'Iceberg Melting Desserts', type: 'Product post', aspect: 1 },
-  { title: 'Taste the Best', client: 'Hot Wok', type: 'Offer post', aspect: 1 },
-  { title: 'Chowpatty Kulfi', client: 'Aflatoon Falooda & Ice Cream', type: 'Product post', aspect: 1 },
-  { title: 'Make Your Move', client: 'Expert Tax Consultants', type: 'Campaign post', aspect: 1 },
-  { title: 'Your Order Has Been Placed', client: 'Burger Points', type: 'App promo', aspect: 1 },
-  { title: 'Chicken Tandoori Momo', client: 'Crisp Fry Cafe', type: 'Menu post', aspect: 1 },
-  { title: 'Galaxy Buds Case', client: 'Samsung Galaxy', type: 'Concept ad', aspect: 1 },
-  { title: 'Work Hard, Dream Big', client: 'Reminder Post', type: 'Typography poster', aspect: 1 },
-  { title: 'New Definition of Style', client: 'Nike', type: 'Concept ad', aspect: 1 },
-  { title: 'Sir Syed Day Offers', client: 'Crisp Fry Cafe', type: 'Offer post', aspect: 1 },
-  { title: 'Sculpting Elegance in Every Turn', client: '', type: 'Product showcase', aspect: 1 },
-  { title: 'Build Your Brand', client: 'BrandsWay PR & Marketing', type: 'Service post', aspect: 1 },
-  { title: "We're Hiring", client: 'BrandsWay PR & Marketing', type: 'Hiring post', aspect: 1 },
-  { title: 'T20 Series Kicks Off', client: 'Badshahcric', type: 'Match post', aspect: 1 },
-  { title: 'Happy Gandhi Jayanti', client: 'Alba Locks', type: 'Festive post', aspect: 1.25 },
-  { title: 'The Sherwani Edit', client: '', type: 'Fashion post', aspect: 1.25 },
+  { title: 'Blue Hour', client: 'Northwind Studio', type: 'Brand identity', aspect: 1 },
+  { title: 'Afterglow', client: 'Lumen Labs', type: 'Campaign', aspect: 1 },
+  { title: 'Night Bloom', client: 'Mira Skincare', type: 'Packaging', aspect: 1 },
+  { title: 'Signal', client: 'Orbit Records', type: 'Art direction', aspect: 1 },
+  { title: 'Low Tide', client: 'Halcyon Hotels', type: 'Campaign', aspect: 1 },
+  { title: 'Parallel', client: 'Atlas & Co.', type: 'Digital design', aspect: 1 },
+  { title: 'Moonwalk', client: 'Kiro Coffee', type: 'Packaging', aspect: 1 },
+  { title: 'Quiet Loud', client: '', type: 'Editorial', aspect: 1 },
+  { title: 'Static', client: 'Orbit Records', type: 'Social content', aspect: 1 },
+  { title: 'Undertow', client: 'Northwind Studio', type: 'Art direction', aspect: 1 },
+  { title: 'Polar', client: '', type: 'Personal project', aspect: 1 },
+  { title: 'Saltwater', client: 'Mira Skincare', type: 'Packaging', aspect: 1 },
+  { title: 'Long Exposure', client: 'Lumen Labs', type: 'Digital design', aspect: 1 },
+  { title: 'Night Shift', client: 'Halcyon Hotels', type: 'Brand identity', aspect: 1 },
+  { title: 'Drift', client: 'Kiro Coffee', type: 'Motion', aspect: 1.25 },
+  { title: 'Midnight Sun', client: 'Atlas & Co.', type: 'Campaign', aspect: 1.25 },
 ];
 
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -24,5 +25,5 @@ const pad2 = (n) => String(n).padStart(2, '0');
 export const workSrc = (i, size = 'card') => `work/${size}/${pad2(i + 1)}.webp`;
 export const workLabel = (w) => (w.client ? `${w.title}, ${w.client}` : w.title);
 
-// the brands she has worked for (concept ads for global brands are not client work)
-export const CLIENTS = [...new Set(WORKS.filter((w) => w.client && w.type !== 'Concept ad').map((w) => w.client))];
+// the clients in the marquee: everyone named on a project, once each
+export const CLIENTS = [...new Set(WORKS.filter((w) => w.client).map((w) => w.client))];

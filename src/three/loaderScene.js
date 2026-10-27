@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import gsap from 'gsap';
 import { createBear, poseWalk, HIP_Y } from './bear.js';
 
-// Colours are used as given (sRGB), so the eye's mocha matches the page's CSS exactly.
+// Colours are used as given (sRGB), like the page's CSS.
 THREE.ColorManagement.enabled = false;
 
 const TAU = Math.PI * 2;
@@ -15,7 +15,7 @@ const SWING = 0.5; // leg swing at full stride, in radians
 const STRIDE = 2 * HIP_Y * Math.sin(SWING); // how far one step carries the bear
 const EYE_R = 0.072;
 // where the camera ends up: just off the lower part of the left eye, beside the glow of light
-// through it, where the bead is closest to the page's mocha
+// through it, where the bead's colour is richest
 const EYE_SPOT = new THREE.Vector3(-0.18, -0.48, 0.86).normalize();
 const END_DIST = 0.06;
 const FRAME_BUDGET = 11; // ms of GPU time a frame may take
@@ -197,7 +197,7 @@ function makeLens(renderer) {
 }
 
 // The loader: a white room, the bear walks in from the right, stops in the middle, turns to look at
-// the camera, waves, and the camera dives into its mocha eye. One GSAP timeline drives the story;
+// the camera, waves, and the camera dives into its eye. One GSAP timeline drives the story;
 // springs add the follow-through that makes a plush feel soft.
 export function createLoaderScene(canvas, { mobile = false } = {}) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, stencil: false, powerPreference: 'high-performance' });

@@ -6,7 +6,7 @@ THREE.ColorManagement.enabled = false;
 
 const TAU = Math.PI * 2;
 
-// Saima's cut-out, sampled into one particle per pixel of a small grid: its place in the picture
+// The portrait cut-out, sampled into one particle per pixel of a small grid: its place in the picture
 // (0..1, origin bottom left) and its colour.
 export async function samplePortrait(url, cols) {
   const img = new Image();
@@ -33,7 +33,7 @@ export async function samplePortrait(url, cols) {
 const particleVertex = /* glsl */`
   uniform vec4 uRect;   // the photo's box: left, bottom, width, height (css px, origin bottom left)
   uniform vec2 uView;   // canvas size, css px
-  uniform float uP;     // 0 = scattered as the iris, 1 = gathered into her picture
+  uniform float uP;     // 0 = a swirl of starlight, 1 = gathered into the portrait
   uniform float uTime;
   uniform float uSize;  // dot size once gathered, css px
   uniform float uDpr;
@@ -52,7 +52,7 @@ const particleVertex = /* glsl */`
     float delay = aSeed.x * 0.4 + aSeed.y * 0.1;
     float t = clamp((uP - delay) / 0.5, 0.0, 1.0);
     float e = t < 0.5 ? 4.0 * t * t * t : 1.0 - pow(-2.0 * t + 2.0, 3.0) * 0.5;
-    // the iris turns slowly; leaving it, each particle spirals in to its place
+    // the swirl turns slowly; leaving it, each particle spirals in to its place
     vec2 rel = rot(uTime * 0.04) * aFrom * maxR;
     rel = rot(e * (1.4 + aSeed.w * 1.2)) * rel;
     vec2 target = uRect.xy + aUv * uRect.zw;
@@ -75,7 +75,7 @@ const dotFragment = /* glsl */`
   }
 `;
 
-// dust that keeps drifting through the hero once she has formed
+// stars that keep drifting and twinkling through the hero once the portrait has formed
 const dustVertex = /* glsl */`
   uniform vec2 uView;
   uniform float uTime;
@@ -160,7 +160,7 @@ const chromeVertex = /* glsl */`
 `;
 const chromeFragment = /* glsl */`
   uniform sampler2D uMatcap;
-  uniform float uFront; // the front canvas keeps only the half of the loop in front of her
+  uniform float uFront; // the front canvas keeps only the half of the loop in front of the portrait
   varying vec3 vN;
   varying vec3 vView;
   varying float vZ;
@@ -174,7 +174,7 @@ const chromeFragment = /* glsl */`
     vec2 uv = vec2(dot(x, n), dot(y, n)) * 0.495 + 0.5;
     vec3 col = texture2D(uMatcap, uv).rgb;
     float f = pow(1.0 - abs(dot(n, v)), 3.0);
-    col = mix(col, vec3(0.94, 0.92, 0.99), f * 0.3);
+    col = mix(col, vec3(0.78, 0.86, 1.0), f * 0.35);
     gl_FragColor = vec4(col, 1.0);
   }
 `;
@@ -224,7 +224,7 @@ export function createHeroScene({ back, front, mobile = false }) {
   const pointer = { x: 0, y: 0, sx: 0, sy: 0 };
   const intro = { p: 0, fade: 1, grow: 0, dust: 0 };
 
-  // ---- the chrome loop round her waist, its front half redrawn in front of her, and two ribbons
+  // ---- the chrome loop round the waist, its front half redrawn in front of the portrait, and two ribbons
   // (a texture or geometry can serve both canvases; each renderer uploads its own copy)
   const matcap = chromeMatcap();
   const loopGeo = new THREE.PlaneGeometry(1, 1, mobile ? 160 : 240, mobile ? 28 : 40);
@@ -245,7 +245,7 @@ export function createHeroScene({ back, front, mobile = false }) {
     return mat;
   });
 
-  // ---- particles that gather into her picture
+  // ---- particles that gather into the portrait
   let points = null;
   let pointsMat = null;
   function setPortrait(sample) {
@@ -255,13 +255,13 @@ export function createHeroScene({ back, front, mobile = false }) {
     const aFrom = new Float32Array(n * 2);
     const aFromColor = new Float32Array(n * 3);
     const aSeed = new Float32Array(n * 4);
-    // the iris the camera just dived into, rebuilt from particles: fibres radiating from a small
-    // pupil, each a little lighter or darker than its neighbours and gently curved
+    // a spiral galaxy of starlight: arms radiating from a bright core, each star a little bluer or
+    // paler than its neighbours, a few of them white-hot
     const FIBRES = 150;
     const tone = Array.from({ length: FIBRES }, () => Math.random());
-    const light = new THREE.Color('#b39478');
-    const deep = new THREE.Color('#5a3f2c');
-    const glint = [new THREE.Color('#e6e0f0'), new THREE.Color('#e5e4e2')];
+    const light = new THREE.Color('#a9c0ff');
+    const deep = new THREE.Color('#2f4fc8');
+    const glint = [new THREE.Color('#ffffff'), new THREE.Color('#dfe8ff')];
     const c = new THREE.Color();
     for (let i = 0; i < n; i++) {
       const [u, v, r, g, b] = sample.pts[i];
@@ -269,14 +269,16 @@ export function createHeroScene({ back, front, mobile = false }) {
       aUv[i * 2 + 1] = v;
       aColor.set([r, g, b], i * 3);
       const fibre = Math.floor(Math.random() * FIBRES);
-      const rad = 0.075 + 1.05 * Math.pow(Math.random(), 0.9);
-      const ang = ((fibre + (Math.random() - 0.5) * 0.18) / FIBRES) * TAU + rad * 0.35;
+      const rad = 0.01 + 1.1 * Math.pow(Math.random(), 1.15);
+      const ang = ((fibre + (Math.random() - 0.5) * 0.18) / FIBRES) * TAU + rad * 2.2;
       aFrom[i * 2] = Math.cos(ang) * rad;
       aFrom[i * 2 + 1] = Math.sin(ang) * rad;
       if (Math.random() < 0.06) c.copy(glint[i % 2]);
       else c.copy(deep).lerp(light, Math.min(1, tone[fibre] * 0.8 + Math.random() * 0.35));
+      // the core burns white
+      c.lerp(glint[0], Math.max(0, 1 - rad / 0.2) * 0.85);
       aFromColor.set([c.r, c.g, c.b], i * 3);
-      // the middle of her picture arrives first
+      // the middle of the portrait arrives first
       const du = (u - 0.5) * 1.6, dv = v - 0.6;
       aSeed.set([Math.min(1, Math.sqrt(du * du + dv * dv) / 0.75), Math.random(), Math.random(), Math.random()], i * 4);
     }
@@ -314,7 +316,7 @@ export function createHeroScene({ back, front, mobile = false }) {
   const DUST = mobile ? 90 : 170;
   const dustSeed = new Float32Array(DUST * 4);
   const dustColor = new Float32Array(DUST * 3);
-  const dustPalette = ['#e6e0f0', '#e5e4e2', '#c9b7a6', '#e6e0f0'].map((c) => new THREE.Color(c));
+  const dustPalette = ['#edf1fb', '#b8cbff', '#ffffff', '#7fa2ff'].map((c) => new THREE.Color(c));
   for (let i = 0; i < DUST; i++) {
     dustSeed.set([Math.random(), Math.random(), Math.random(), Math.random()], i * 4);
     const c = dustPalette[i % dustPalette.length];
@@ -366,7 +368,7 @@ export function createHeroScene({ back, front, mobile = false }) {
     }
     dustMat.uniforms.uView.value.set(w, h);
     dustMat.uniforms.uDpr.value = dpr;
-    // the loop sits round her waist, a little wider than her coat, tipped towards us
+    // the loop sits round the waist, a little wider than the figure, tipped towards us
     const fw = rect.z, fh = rect.w;
     const cx = rect.x + fw / 2 - w / 2;
     const cy = rect.y + fh * 0.43 - h / 2;

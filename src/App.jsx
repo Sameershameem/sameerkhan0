@@ -43,7 +43,7 @@ export default function App() {
   const reveal = useCallback(() => {
     setStage('reveal');
     lockScroll(false);
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#6f4e37');
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#0b1433');
     ScrollTrigger.refresh();
   }, []);
   const open = useCallback((i) => setViewing(i), []);
@@ -51,7 +51,7 @@ export default function App() {
   const step = useCallback((d) => setViewing((i) => (i + d + WORKS.length) % WORKS.length), []);
 
   useEffect(() => {
-    if (skipIntro) document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#6f4e37');
+    if (skipIntro) document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#0b1433');
   }, []);
 
   return (

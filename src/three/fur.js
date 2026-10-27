@@ -419,7 +419,7 @@ export function felt(color, { gloss = 0, sheen = 0.12, map = null } = {}) {
   });
 }
 
-// A safety eye, as sewn into real teddies: a glossy bead of mocha plastic, deeper in the middle,
+// A safety eye, as sewn into real teddies: a glossy bead of coloured plastic, deeper in the middle,
 // with light gathering at its lower edge and the studio's window and strip light reflected crisply
 // in its dome. It looks down its local +z.
 export function safetyEye({ iris = '#6f4e37' } = {}) {

@@ -1,19 +1,20 @@
-# Saima Ahmed — Portfolio
+# Portfolio Template
 
-A one-page portfolio for Saima Ahmed, graphic designer, built with React, Vite and Tailwind CSS, with
-three.js for the 3D:
+A one-page portfolio for a designer, art director or any creative, built with React, Vite and
+Tailwind CSS, with three.js for the 3D:
 
 - **Intro:** on a plain white screen a plush teddy (shaggy blue shark hood, white felt teeth, fish on
   the belly) walks in from the right, stops in the middle, turns to look at you and waves, and the
-  camera dives into its mocha bead eye. The fur is drawn in layers of strands gathered into tufts;
-  the quality adapts to the GPU so the intro always runs smoothly, and devices that can't draw it
-  smoothly go straight to the hero.
-- **Hero:** the iris breaks into particles that gather into Saima's portrait, her name sits behind her,
-  and liquid chrome wraps round her.
-- **The rest:** About, a pinned horizontal gallery of her designs with a full-size viewer, Services
-  and Contact.
+  camera dives into its glossy bead eye as the screen turns to midnight. The fur is drawn in layers of
+  strands gathered into tufts; the quality adapts to the GPU so the intro always runs smoothly, and
+  devices that can't draw it smoothly go straight to the hero.
+- **Hero:** a swirl of starlight gathers into the portrait under a glowing moon, the name sits behind
+  it in two big words, and liquid chrome wraps round it.
+- **The rest:** About with animated counts and a client marquee, a pinned horizontal gallery of
+  projects with a full-size viewer, Services with hover previews, and Contact.
 
-Palette: Mocha Brown `#6F4E37`, Platinum Silver `#E5E4E2`, Pale Lavender `#E6E0F0`.
+Palette: Midnight `#0B1433`, Deep midnight `#070D24`, Mist `#E4E9F4`, Ice `#EDF1FB`,
+Electric blue `#6D97FF` (set in `src/index.css`).
 
 ## Run it
 
@@ -24,15 +25,20 @@ npm run build     # production build in dist/
 npm run preview   # serve the build
 ```
 
-## Edit the content
+## Make it yours
 
 | What | Where |
 | --- | --- |
-| Designs: title, client, type, aspect | `src/data/works.js` |
-| Design images | `public/work/{card-sm,card,full}/NN.webp` (512, 768 and up to 1600 px wide) |
+| Name, role, hero pitch and motto, About heading and intro | `SITE` in `src/data/site.js` |
 | Contact details (email, Instagram, phone) | `CONTACT` in `src/data/site.js` |
 | Services list | `SERVICES` in `src/data/site.js` |
-| Portrait | `public/saima/saima-{1200,1600,2000,2600}.webp` |
+| Projects: title, client, type, aspect | `src/data/works.js` |
+| Project images | `public/work/{card-sm,card,full}/NN.webp` (512, 768 and 1600 px wide) |
+| Hero portrait (a cut-out with a transparent background) | `public/model/`, listed in `SITE.portrait` |
+| Colours | the `@theme` block in `src/index.css` |
+
+The sample portrait is AI-generated and shows no real person; the sample project images are
+abstract artwork generated in code. Replace both with your own.
 
 ## Deploy
 

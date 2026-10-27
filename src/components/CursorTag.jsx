@@ -27,7 +27,7 @@ export default function CursorTag() {
   return (
     <div
       ref={ref}
-      className="pointer-events-none fixed left-0 top-0 z-50 -ml-9 -mt-9 grid size-[4.5rem] scale-0 place-items-center rounded-full bg-lavender text-[10px] uppercase tracking-[0.25em] text-mocha opacity-0 shadow-[0_10px_30px_-10px_rgba(20,12,6,0.5)]"
+      className="pointer-events-none fixed left-0 top-0 z-50 -ml-9 -mt-9 grid size-[4.5rem] scale-0 place-items-center rounded-full bg-ice text-[10px] uppercase tracking-[0.25em] text-night opacity-0 shadow-[0_10px_30px_-10px_rgba(2,5,16,0.5)]"
       aria-hidden="true"
     >
       View

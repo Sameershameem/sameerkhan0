@@ -3,31 +3,31 @@ import gsap from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import { createHeroScene, samplePortrait } from '../three/heroScene.js';
 import { reducedMotion, scrollToTarget, webgl } from '../lib/scroll.js';
+import { SITE } from '../data/site.js';
 
-const WORDS = ['Saima', 'Ahmed'];
-const PORTRAIT = 'saima/saima-1200.webp';
-const SRCSET = 'saima/saima-1200.webp 642w, saima/saima-1600.webp 856w, saima/saima-2000.webp 1070w, saima/saima-2600.webp 1392w';
+const { nameWords: WORDS, portrait: PORTRAIT } = SITE;
 
 function Word({ text, className, wordRef }) {
   return (
     <span ref={wordRef} className={`absolute block whitespace-nowrap leading-[0.86] ${className}`}>
       {[...text].map((ch, i) => (
         <span key={i} className="inline-block overflow-hidden pb-[0.05em] align-top">
-          <span className="hero-letter inline-block uppercase">{ch}</span>
+          <span className="hero-letter inline-block bg-[linear-gradient(180deg,#f6f8ff_0%,#d3ddff_55%,#93abf0_100%)] bg-clip-text uppercase text-transparent">{ch}</span>
         </span>
       ))}
     </span>
   );
 }
 
-// The hero: on the mocha the camera dived into, particles from the bear's iris gather into Saima,
-// her name sits behind her like the reference's CHOREO / CLASS, and liquid chrome wraps round her.
+// The hero, at midnight: a swirl of starlight gathers into the portrait under a glowing moon, the
+// name sits behind it in two big words, and liquid chrome wraps round it.
 export default function Hero({ start, onReady }) {
   const sectionRef = useRef(null);
   const stageRef = useRef(null);
   const backRef = useRef(null);
   const frontRef = useRef(null);
   const imgRef = useRef(null);
+  const moonRef = useRef(null);
   const nameA = useRef(null);
   const nameB = useRef(null);
   const uiRef = useRef(null);
@@ -63,7 +63,9 @@ export default function Hero({ start, onReady }) {
     const ui = uiRef.current.querySelectorAll('.hero-ui');
     gsap.set(letters, { yPercent: 112 });
     gsap.set(ui, { autoAlpha: 0, y: 14 });
+    gsap.set(moonRef.current, { autoAlpha: 0, scale: 0.72 });
     const tl = gsap.timeline({ paused: true });
+    tl.to(moonRef.current, { autoAlpha: 1, scale: 1, duration: 2.6, ease: 'power2.out' }, 0.5);
     tl.to(intro, { p: 1, duration: 2.7, ease: 'power1.inOut' }, 0.1);
     tl.to(intro, { grow: 1, duration: 2.0, ease: 'power2.inOut' }, 1.4);
     tl.to(img, { opacity: 1, duration: 0.8, ease: 'power1.inOut' }, 2.45);
@@ -77,7 +79,7 @@ export default function Hero({ start, onReady }) {
     let ready = false;
     const prepare = async () => {
       if (scene) {
-        const sample = await samplePortrait(PORTRAIT, mobile ? 104 : 150);
+        const sample = await samplePortrait(PORTRAIT.src, mobile ? 104 : 150);
         measure();
         scene.setPortrait(sample);
         await scene.prepare();
@@ -170,13 +172,23 @@ export default function Hero({ start, onReady }) {
     <section
       ref={sectionRef}
       id="top"
-      className="sticky top-0 z-0 h-svh overflow-hidden bg-mocha"
+      className="sticky top-0 z-0 h-svh overflow-hidden bg-night"
       aria-labelledby="hero-title"
     >
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_85%_at_50%_38%,#7d5a42_0%,#6f4e37_46%,#563b29_100%)]" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_90%_at_46%_30%,#1a2c6e_0%,#0f1c4a_38%,#0b1433_62%,#060b20_100%)]" />
       <div ref={stageRef} className="absolute inset-0 origin-[50%_75%] will-change-transform">
-        <h1 id="hero-title" className="sr-only">Saima Ahmed, graphic designer</h1>
-        <div aria-hidden="true" className="pointer-events-none absolute inset-0 font-display font-normal text-lavender">
+        <h1 id="hero-title" className="sr-only">{`${SITE.name}, ${SITE.role}`}</h1>
+        {/* the moon: a soft glow behind the head, with a fine orbit round it */}
+        <div
+          ref={moonRef}
+          aria-hidden="true"
+          className="pointer-events-none absolute left-1/2 top-[45svh] size-[46svh] -translate-x-1/2 -translate-y-1/2 land:left-[46%] land:top-[31svh] land:size-[60svh]"
+        >
+          <div className="absolute inset-0 rounded-full bg-[radial-gradient(circle,rgba(150,180,255,0.5)_0%,rgba(96,128,240,0.24)_34%,rgba(40,64,170,0.08)_56%,rgba(20,32,100,0)_70%)]" />
+          <div className="absolute inset-[13%] rounded-full border border-ice/15" />
+          <div className="absolute inset-[-6%] rounded-full border border-ice/[0.07]" />
+        </div>
+        <div aria-hidden="true" className="pointer-events-none absolute inset-0 font-display font-normal text-ice">
           <Word
             text={WORDS[0]}
             wordRef={nameA}
@@ -191,34 +203,45 @@ export default function Hero({ start, onReady }) {
         <canvas ref={backRef} className="pointer-events-none absolute inset-0 block h-full w-full" aria-hidden="true" />
         <img
           ref={imgRef}
-          src={PORTRAIT}
-          srcSet={SRCSET}
-          sizes="(min-aspect-ratio: 1/1) 46vh, 35vh"
-          width="642"
-          height="1200"
-          alt="Saima Ahmed"
+          src={PORTRAIT.src}
+          srcSet={PORTRAIT.srcSet}
+          sizes="(min-aspect-ratio: 1/1) 43vh, 33vh"
+          width={PORTRAIT.width}
+          height={PORTRAIT.height}
+          alt={PORTRAIT.alt}
           decoding="async"
           fetchPriority="high"
           className="pointer-events-none absolute bottom-0 left-1/2 h-[66svh] w-auto max-w-none -translate-x-1/2 select-none opacity-0 land:left-[46%] land:h-[86svh]"
         />
         <canvas ref={frontRef} className="pointer-events-none absolute inset-0 block h-full w-full" aria-hidden="true" />
       </div>
+      {/* fine film grain over the night */}
+      <div aria-hidden="true" className="hero-grain pointer-events-none absolute inset-0 opacity-[0.05]" />
 
-      <div ref={uiRef} className="pointer-events-none absolute inset-0 text-lavender">
-        <p className="hero-ui absolute left-[5.5vw] top-[11.5svh] hidden text-[10px] uppercase leading-[1.9] tracking-[0.32em] text-lavender/90 land:block short:hidden">
-          Design<br />Create<br />Inspire
-          <span className="mt-3 block h-px w-6 bg-lavender/60" />
+      <div ref={uiRef} className="pointer-events-none absolute inset-0 text-ice">
+        <p className="hero-ui absolute left-[5.5vw] top-[11.5svh] hidden text-[10px] uppercase leading-[1.9] tracking-[0.32em] text-ice/90 land:block short:hidden">
+          {SITE.motto.map((w, i) => (
+            <span key={w}>{i > 0 && <br />}{w}</span>
+          ))}
+          <span className="mt-3 block h-px w-6 bg-glow/80" />
         </p>
-        <p className="hero-ui absolute right-[5.5vw] top-[35svh] hidden max-w-[15rem] text-[13px] leading-relaxed text-lavender/85 land:block short:hidden">
-          Graphic designer crafting scroll-stopping posts, menus and campaigns for brands that want to be noticed.
-          <span className="mt-4 block h-px w-6 bg-lavender/60" />
+        <p className="hero-ui absolute right-[5.5vw] top-[35svh] hidden max-w-[15rem] text-[13px] leading-relaxed text-ice/85 land:block short:hidden">
+          {SITE.pitch}
+          <span className="mt-4 block h-px w-6 bg-glow/80" />
+        </p>
+        <p className="hero-ui absolute bottom-[6svh] right-[5.5vw] hidden items-center gap-3 text-[10px] uppercase tracking-[0.3em] text-ice/80 land:flex short:hidden">
+          <span className="relative flex size-2">
+            <span className="absolute inset-0 animate-ping rounded-full bg-glow/70" />
+            <span className="relative size-2 rounded-full bg-glow shadow-[0_0_12px_2px_rgba(109,151,255,0.7)]" />
+          </span>
+          Available for projects
         </p>
         <button
           type="button"
           onClick={() => scrollToTarget('#work')}
           className="hero-ui pointer-events-auto absolute left-[5.5vw] top-[55svh] hidden items-center gap-4 text-left text-[10px] uppercase leading-[1.7] tracking-[0.3em] land:flex"
         >
-          <span className="grid size-12 place-items-center rounded-full border border-lavender/50 transition-colors duration-500 hover:bg-lavender hover:text-mocha">
+          <span className="grid size-12 place-items-center rounded-full border border-ice/40 shadow-[0_0_24px_-6px_rgba(109,151,255,0.6)] transition-colors duration-500 hover:border-glow hover:bg-glow hover:text-night-ink">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path d="M8 2v12M3 9l5 5 5-5" stroke="currentColor" strokeWidth="1.2" />
             </svg>

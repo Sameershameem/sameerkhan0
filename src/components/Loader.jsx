@@ -2,11 +2,12 @@ import { useEffect, useRef } from 'react';
 import gsap from 'gsap';
 import { createLoaderScene } from '../three/loaderScene.js';
 import { WORKS, workSrc } from '../data/works.js';
+import { SITE } from '../data/site.js';
 
-// what the dive waits for: the hero's portrait, the designs' first images and the type
+// what the dive waits for: the hero's portrait, the projects' first images and the type
 function preload(onProgress) {
   const small = Math.min(window.innerWidth, window.innerHeight) < 700;
-  const urls = ['saima/saima-1200.webp', ...WORKS.map((_, i) => workSrc(i, small ? 'card-sm' : 'card'))];
+  const urls = [SITE.portrait.src, ...WORKS.map((_, i) => workSrc(i, small ? 'card-sm' : 'card'))];
   const total = urls.length + 1;
   let done = 0;
   const tick = () => onProgress(++done / total);
@@ -19,7 +20,7 @@ function preload(onProgress) {
 }
 
 // The intro: a plain white screen, the plush bear walks in from the right, turns to look at you,
-// waves, and the camera dives into its mocha eye, which becomes the hero's background.
+// waves, and the camera dives into its eye, and the screen turns to the hero's midnight.
 export default function Loader({ heroReady, onReveal, onDone }) {
   const rootRef = useRef(null);
   const canvasRef = useRef(null);
@@ -48,7 +49,7 @@ export default function Loader({ heroReady, onReveal, onDone }) {
     }
     sceneRef.current = scene;
     const st = scene.state;
-    // straight to the hero (skipped, or a GPU too slow for a smooth bear): the screen turns mocha,
+    // straight to the hero (skipped, or a GPU too slow for a smooth bear): the screen turns midnight,
     // then the loader fades away
     const leave = () => {
       if (finished.current) return;
@@ -63,7 +64,7 @@ export default function Loader({ heroReady, onReveal, onDone }) {
       });
     };
     leaveRef.current = leave;
-    // the veil turns the screen mocha as the camera reaches the eye; the small print leaves as the
+    // the veil turns the screen midnight as the camera reaches the eye; the small print leaves as the
     // bear turns round
     const veil = () => {
       veilRef.current.style.opacity = String(st.fade);
@@ -154,14 +155,14 @@ export default function Loader({ heroReady, onReveal, onDone }) {
   }, [heroReady]);
 
   return (
-    <div ref={rootRef} className="fixed inset-0 z-50 bg-white" role="status" aria-label="Loading Saima Ahmed's portfolio">
+    <div ref={rootRef} className="fixed inset-0 z-50 bg-white" role="status" aria-label="Loading the portfolio">
       <canvas ref={canvasRef} className="absolute inset-0 block h-full w-full" aria-hidden="true" />
-      <div ref={uiRef} className="pointer-events-none absolute inset-0 text-mocha">
+      <div ref={uiRef} className="pointer-events-none absolute inset-0 text-night">
         <p className="absolute left-5 top-5 font-display text-lg tracking-tight md:left-8 md:top-7 md:text-xl">
-          Saima Ahmed
+          {SITE.name}
         </p>
         <p className="absolute bottom-5 left-5 text-[10px] uppercase tracking-[0.28em] md:bottom-7 md:left-8">
-          Graphic designer
+          Portfolio
         </p>
         <p className="absolute bottom-5 right-5 font-display text-2xl tabular-nums md:bottom-7 md:right-8 md:text-3xl">
           <span ref={countRef}>00</span>
@@ -171,11 +172,11 @@ export default function Loader({ heroReady, onReveal, onDone }) {
       <button
         type="button"
         onClick={() => leaveRef.current()}
-        className="absolute right-4 top-4 rounded-full px-4 py-2 text-[10px] uppercase tracking-[0.28em] text-mocha/70 transition hover:text-mocha md:right-7 md:top-6"
+        className="absolute right-4 top-4 rounded-full px-4 py-2 text-[10px] uppercase tracking-[0.28em] text-night/70 transition hover:text-night md:right-7 md:top-6"
       >
         Skip intro
       </button>
-      <div ref={veilRef} className="pointer-events-none absolute inset-0 bg-mocha opacity-0" />
+      <div ref={veilRef} className="pointer-events-none absolute inset-0 bg-night opacity-0" />
     </div>
   );
 }

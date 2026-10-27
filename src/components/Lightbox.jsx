@@ -5,7 +5,7 @@ import { lockScroll } from '../lib/scroll.js';
 
 const pad2 = (n) => String(n).padStart(2, '0');
 
-// A design at full size, with its title, and the others a swipe or an arrow key away
+// A project at full size, with its title, and the others a swipe or an arrow key away
 export default function Lightbox({ index, onClose, onStep }) {
   const rootRef = useRef(null);
   const imgRef = useRef(null);
@@ -68,7 +68,7 @@ export default function Lightbox({ index, onClose, onStep }) {
       role="dialog"
       aria-modal="true"
       aria-label="Design viewer"
-      className="fixed inset-0 z-[60] hidden flex-col items-center justify-center gap-6 bg-mocha-ink/90 px-5 py-6 text-lavender backdrop-blur-xl"
+      className="fixed inset-0 z-[60] hidden flex-col items-center justify-center gap-6 bg-night-ink/90 px-5 py-6 text-ice backdrop-blur-xl"
       onPointerDown={(e) => { swipe.current = { x: e.clientX, y: e.clientY }; }}
       onPointerUp={(e) => {
         const s = swipe.current;
@@ -83,7 +83,7 @@ export default function Lightbox({ index, onClose, onStep }) {
         ref={closeRef}
         type="button"
         onClick={onClose}
-        className="absolute right-5 top-5 text-[10px] uppercase tracking-[0.3em] text-lavender/80 transition-colors hover:text-lavender"
+        className="absolute right-5 top-5 text-[10px] uppercase tracking-[0.3em] text-ice/80 transition-colors hover:text-ice"
       >
         Close ✕
       </button>
@@ -100,12 +100,12 @@ export default function Lightbox({ index, onClose, onStep }) {
         <div className="flex w-full max-w-3xl items-end justify-between gap-6">
           <div>
             <p className="font-display text-2xl leading-tight land:text-3xl">{w.title}</p>
-            <p className="mt-1 text-[10px] uppercase tracking-[0.28em] text-lavender/65">{[w.client, w.type].filter(Boolean).join(' · ')}</p>
+            <p className="mt-1 text-[10px] uppercase tracking-[0.28em] text-ice/65">{[w.client, w.type].filter(Boolean).join(' · ')}</p>
           </div>
           <div className="flex items-center gap-4 text-[11px] tracking-[0.2em]">
-            <button type="button" onClick={() => step(-1)} aria-label="Previous design" className="grid size-11 place-items-center rounded-full border border-lavender/40 transition-colors hover:bg-lavender hover:text-mocha">←</button>
+            <button type="button" onClick={() => step(-1)} aria-label="Previous project" className="grid size-11 place-items-center rounded-full border border-ice/40 transition-colors hover:bg-ice hover:text-night">←</button>
             <span className="tabular-nums">{pad2(shown + 1)} / {pad2(WORKS.length)}</span>
-            <button type="button" onClick={() => step(1)} aria-label="Next design" className="grid size-11 place-items-center rounded-full border border-lavender/40 transition-colors hover:bg-lavender hover:text-mocha">→</button>
+            <button type="button" onClick={() => step(1)} aria-label="Next project" className="grid size-11 place-items-center rounded-full border border-ice/40 transition-colors hover:bg-ice hover:text-night">→</button>
           </div>
         </div>
       )}

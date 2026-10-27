@@ -31,6 +31,8 @@ const HOOD = new THREE.Vector3(0, 0.47, -0.085); // hood centre, in the neck's s
 const HOOD_R = 0.62;
 const HOLE = [0, -0.19, 0.66, 0.6]; // face opening, in hood-direction space
 const EYE_R = 0.066;
+// the bead eyes: a deep sapphire, the colour the camera dives into before the hero's midnight
+const EYE_COLOR = '#1c2b6a';
 
 // a point on the muzzle's surface, lifted a little, relative to the head
 function onMuzzle(x, y, lift = 0.01) {
@@ -203,7 +205,7 @@ export function createBear({ shells = 24 } = {}) {
   stitch([[0.048, -0.2], [0.022, -0.188], [0, -0.175]]);
 
   const eyes = [-1, 1].map((side) => {
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(EYE_R, 128, 96), safetyEye());
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(EYE_R, 128, 96), safetyEye({ iris: EYE_COLOR }));
     const x = 0.2 * side, y = 0.03;
     const z = HEAD_R[2] * Math.sqrt(1 - (x / HEAD_R[0]) ** 2 - (y / HEAD_R[1]) ** 2) - 0.026;
     eye.position.copy(HEAD).add(new THREE.Vector3(x, y, z));

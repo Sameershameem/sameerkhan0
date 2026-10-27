@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import gsap from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import { lockScroll, scrollToTarget } from '../lib/scroll.js';
+import { SITE } from '../data/site.js';
 
 export const SECTIONS = [
   { id: 'top', label: 'Home' },
@@ -75,7 +76,7 @@ export default function Nav({ show }) {
     setOpen(!open);
   };
 
-  const ink = light && !open ? 'text-mocha' : 'text-lavender';
+  const ink = light && !open ? 'text-night' : 'text-ice';
   return (
     <>
       <header ref={barRef} className={`fixed inset-x-0 top-0 z-40 transition-colors duration-500 ${ink}`}>
@@ -94,7 +95,7 @@ export default function Nav({ show }) {
             <span className="hidden sm:inline">{open ? 'Close' : 'Menu'}</span>
           </button>
           <a href="#top" onClick={(e) => { e.preventDefault(); go('top'); }} className="font-display text-lg tracking-tight land:hidden">
-            Saima Ahmed
+            {SITE.name}
           </a>
           <ul className="hidden items-center gap-10 text-[10px] uppercase tracking-[0.3em] land:flex">
             {SECTIONS.slice(1).map((s) => (
@@ -113,7 +114,7 @@ export default function Nav({ show }) {
                 href="#contact"
                 onClick={(e) => { e.preventDefault(); go('contact'); }}
                 aria-label="Get in touch"
-                className="grid size-9 place-items-center rounded-full border border-current/40 transition-colors duration-500 hover:bg-lavender hover:text-mocha"
+                className="grid size-9 place-items-center rounded-full border border-current/40 transition-colors duration-500 hover:bg-ice hover:text-night"
               >
                 <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
                   <path d="M2 10 10 2M4 2h6v6" stroke="currentColor" strokeWidth="1.1" />
@@ -163,7 +164,7 @@ function Menu({ open, onGo }) {
     <div
       ref={ref}
       id="menu"
-      className="fixed inset-0 z-30 hidden flex-col justify-end bg-mocha-deep px-[5vw] pb-[8svh] text-lavender land:px-[3.2vw]"
+      className="fixed inset-0 z-30 hidden flex-col justify-end bg-night-deep px-[5vw] pb-[8svh] text-ice land:px-[3.2vw]"
       aria-hidden={!open}
     >
       <ul className="font-display leading-[0.95]">
@@ -175,7 +176,7 @@ function Menu({ open, onGo }) {
               onClick={(e) => { e.preventDefault(); onGo(s.id); }}
               className="menu-item group flex items-baseline gap-5 py-1 text-[15vw] land:text-[8.5vw]"
             >
-              <span className="font-sans text-[10px] tracking-[0.3em] text-lavender/60">0{i + 1}</span>
+              <span className="font-sans text-[10px] tracking-[0.3em] text-ice/60">0{i + 1}</span>
               <span className="transition-[font-style,letter-spacing] duration-500 group-hover:italic">{s.label}</span>
             </a>
           </li>

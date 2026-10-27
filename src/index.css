@@ -6,12 +6,16 @@
 @custom-variant short (@media (max-height: 540px));
 
 @theme {
-  --color-mocha: #6f4e37;
-  --color-mocha-deep: #4b3324;
-  --color-mocha-ink: #2e1f15;
-  --color-mocha-soft: #8a6a52;
-  --color-silver: #e5e4e2;
-  --color-lavender: #e6e0f0;
+  /* midnight: the hero and the dark sections */
+  --color-night: #0b1433;
+  --color-night-deep: #070d24;
+  --color-night-ink: #03060f;
+  --color-night-soft: #2b3d7a;
+  /* light sections and type on the dark ones */
+  --color-mist: #e4e9f4;
+  --color-ice: #edf1fb;
+  /* the one bright accent: electric blue */
+  --color-glow: #6d97ff;
   --font-display: "Bodoni Moda Variable", "Bodoni Moda", "Didot", "Bodoni 72", Georgia, serif;
   --font-sans: "Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif;
   --ease-silk: cubic-bezier(0.22, 1, 0.36, 1);
@@ -29,12 +33,12 @@
   html.is-locked, html.is-locked body { overflow: hidden; }
   body {
     margin: 0;
-    background: var(--color-mocha);
-    color: var(--color-lavender);
+    background: var(--color-night);
+    color: var(--color-ice);
     font-family: var(--font-sans);
   }
-  ::selection { background: var(--color-lavender); color: var(--color-mocha); }
-  :focus-visible { outline: 1.5px solid var(--color-lavender); outline-offset: 3px; }
+  ::selection { background: var(--color-glow); color: var(--color-night-ink); }
+  :focus-visible { outline: 1.5px solid var(--color-glow); outline-offset: 3px; }
 }
 
 /* Lenis */
@@ -48,4 +52,10 @@ html.lenis, html.lenis body { height: auto; }
 }
 @media (prefers-reduced-motion: reduce) {
   .marquee { animation: none !important; }
+}
+
+/* the hero's film grain: a small tile of noise, drawn once */
+.hero-grain {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.9 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 180px 180px;
 }
